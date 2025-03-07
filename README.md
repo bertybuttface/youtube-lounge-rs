@@ -75,6 +75,9 @@ while let Some(event) = rx.recv().await {
             println!("Ad playing. Content video: {}", ad_state.content_video_id);
             println!("Skip enabled: {}", ad_state.is_skip_enabled);
         },
+        LoungeEvent::SubtitlesTrackChanged(track) => {
+            println!("Subtitles track changed for video: {}", track.video_id);
+        },
         // Handle other events...
         _ => {}
     }
@@ -204,6 +207,7 @@ Events received from the YouTube Lounge API:
 - `ScreenDisconnected`
 - `SessionEstablished`
 - `AdStateChange(AdState)`
+- `SubtitlesTrackChanged(SubtitlesTrackChanged)`
 - `Unknown(String)`
 
 ## License
