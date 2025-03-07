@@ -85,6 +85,10 @@ while let Some(event) = rx.recv().await {
             println!("Navigation changed - Next: {}, Previous: {}", 
                 nav.has_next, nav.has_previous);
         },
+        LoungeEvent::VideoQualityChanged(quality) => {
+            println!("Video quality changed to {} for {}", 
+                quality.quality_level, quality.video_id);
+        },
         // Handle other events...
         _ => {}
     }
@@ -217,6 +221,7 @@ Events received from the YouTube Lounge API:
 - `SubtitlesTrackChanged(SubtitlesTrackChanged)`
 - `AutoplayModeChanged(AutoplayModeChanged)`
 - `HasPreviousNextChanged(HasPreviousNextChanged)`
+- `VideoQualityChanged(VideoQualityChanged)`
 - `Unknown(String)`
 
 ## License
