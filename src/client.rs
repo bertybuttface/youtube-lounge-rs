@@ -34,9 +34,9 @@ use crate::commands::{get_command_name, PlaybackCommand};
 use crate::error::LoungeError;
 use crate::events::LoungeEvent;
 use crate::models::{
-    AdState, AutoplayModeChanged, Device, DeviceInfo, HasPreviousNextChanged, LoungeStatus,
-    NowPlaying, PlaybackState, Screen, ScreenAvailabilityResponse, ScreenResponse, ScreensResponse,
-    SubtitlesTrackChanged, VideoQualityChanged,
+    AdState, AudioTrackChanged, AutoplayModeChanged, Device, DeviceInfo, HasPreviousNextChanged,
+    LoungeStatus, NowPlaying, PlaybackState, Screen, ScreenAvailabilityResponse, ScreenResponse,
+    ScreensResponse, SubtitlesTrackChanged, VideoQualityChanged,
 };
 
 // Session state
@@ -876,6 +876,13 @@ async fn process_event_chunk(
                             serde_json::from_value::<VideoQualityChanged>(payload.clone())
                         {
                             let _ = sender.send(LoungeEvent::VideoQualityChanged(quality));
+                        }
+                    }
+                    "onAudioTrackChanged" => {
+                        if let Ok(audio_track) =
+                            serde_json::from_value::<AudioTrackChanged>(payload.clone())
+                        {
+                            let _ = sender.send(LoungeEvent::AudioTrackChanged(audio_track));
                         }
                     }
                     _ => {

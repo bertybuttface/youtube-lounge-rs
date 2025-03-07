@@ -204,3 +204,12 @@ pub struct VideoQualityChanged {
     #[serde(rename = "videoId")]
     pub video_id: String,
 }
+
+// Audio track changed event
+#[derive(Debug, Clone, Deserialize)]
+pub struct AudioTrackChanged {
+    #[serde(rename = "audioTrackId")]
+    pub audio_track_id: String,
+    #[serde(rename = "videoId")]
+    pub video_id: String,
+}
