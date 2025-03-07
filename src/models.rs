@@ -193,3 +193,14 @@ pub struct HasPreviousNextChanged {
     #[serde(rename = "hasPrevious")]
     pub has_previous: String,
 }
+
+// Video quality changed event
+#[derive(Debug, Clone, Deserialize)]
+pub struct VideoQualityChanged {
+    #[serde(rename = "availableQualityLevels")]
+    pub available_quality_levels: String,
+    #[serde(rename = "qualityLevel")]
+    pub quality_level: String,
+    #[serde(rename = "videoId")]
+    pub video_id: String,
+}

@@ -36,7 +36,7 @@ use crate::events::LoungeEvent;
 use crate::models::{
     AdState, AutoplayModeChanged, Device, DeviceInfo, HasPreviousNextChanged, LoungeStatus,
     NowPlaying, PlaybackState, Screen, ScreenAvailabilityResponse, ScreenResponse, ScreensResponse,
-    SubtitlesTrackChanged,
+    SubtitlesTrackChanged, VideoQualityChanged,
 };
 
 // Session state
@@ -869,6 +869,13 @@ async fn process_event_chunk(
                             serde_json::from_value::<HasPreviousNextChanged>(payload.clone())
                         {
                             let _ = sender.send(LoungeEvent::HasPreviousNextChanged(has_prev_next));
+                        }
+                    }
+                    "onVideoQualityChanged" => {
+                        if let Ok(quality) =
+                            serde_json::from_value::<VideoQualityChanged>(payload.clone())
+                        {
+                            let _ = sender.send(LoungeEvent::VideoQualityChanged(quality));
                         }
                     }
                     _ => {

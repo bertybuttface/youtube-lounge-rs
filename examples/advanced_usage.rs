@@ -286,6 +286,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Has next: {}", nav.has_next);
                         println!("  Has previous: {}", nav.has_previous);
                     }
+                    LoungeEvent::VideoQualityChanged(quality) => {
+                        println!("Video quality changed:");
+                        println!("  Quality level: {}", quality.quality_level);
+                        println!("  Available levels: {}", quality.available_quality_levels);
+                        println!("  Video ID: {}", quality.video_id);
+                    }
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
