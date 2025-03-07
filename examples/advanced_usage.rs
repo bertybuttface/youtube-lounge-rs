@@ -75,21 +75,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut screen_name = String::new();
 
     // Check if we're in pairing mode
-    if args.len() > 1 && args[1] == "pair" {
-        pair_mode = true;
-
-        if args.len() > 2 {
-            // Remove any spaces from the pairing code
-            pairing_code = args[2].replace(" ", "");
-        } else {
-            eprintln!("Usage: cargo run --example example pair <pairing_code> [screen_name]");
+    if args.len() > 1 {
+        if args[1] == "help" {
+            println!("YouTube Lounge API Advanced Example");
+            println!("Usage:");
+            println!("  cargo run --example advanced_usage              - Connect to a previously paired screen");
+            println!("  cargo run --example advanced_usage pair CODE    - Pair with a new screen using the CODE");
+            println!("  cargo run --example advanced_usage debug        - Connect with debug mode to see raw event data");
+            println!("  cargo run --example advanced_usage pair CODE debug - Pair with debug mode enabled");
             return Ok(());
-        }
+        } else if args[1] == "pair" {
+            pair_mode = true;
 
-        // Optional screen name for identification
-        if args.len() > 3 {
-            screen_name = args[3].clone();
+            if args.len() > 2 {
+                // Remove any spaces from the pairing code
+                pairing_code = args[2].replace(" ", "");
+            } else {
+                eprintln!(
+                    "Usage: cargo run --example advanced_usage pair <pairing_code> [screen_name]"
+                );
+                return Ok(());
+            }
         }
+    }
+
+    // Optional screen name for identification
+    if args.len() > 3 {
+        screen_name = args[3].clone();
     }
 
     // Load existing authentication data
@@ -153,6 +165,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &stored_screen.lounge_token,
         &stored_screen.device_name,
     );
+
+    // Check for debug mode flag
+    let debug_mode = args.contains(&"debug".to_string());
+    if debug_mode {
+        println!("Debug mode enabled - will show raw JSON payloads");
+        client.enable_debug_mode();
+    }
 
     // Set a callback to save refreshed tokens
     let auth_store_clone = auth_store.clone();

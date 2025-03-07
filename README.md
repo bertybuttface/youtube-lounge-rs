@@ -166,6 +166,12 @@ cargo run --example advanced_usage pair <your_pairing_code>
 
 # Subsequent runs: reuse stored authentication
 cargo run --example advanced_usage
+
+# Run with debug mode to see raw event JSON
+cargo run --example advanced_usage debug
+
+# Pair and enable debug mode
+cargo run --example advanced_usage pair <your_pairing_code> debug
 ```
 
 Advanced example features:
@@ -204,6 +210,20 @@ The library provides the following main components:
 ### `LoungeClient`
 
 The main client for interacting with the YouTube Lounge API.
+
+#### Debug Mode
+
+You can enable debug mode to see the raw JSON payload of all events, which helps when inspecting for new or undocumented parameters:
+
+```rust
+// Enable debug mode to inspect all events and their raw JSON
+client.enable_debug_mode();
+
+// Later, when done debugging
+client.disable_debug_mode();
+```
+
+When debug mode is enabled, all events (including unknown ones) will print their full JSON payload to the console, allowing you to see any parameters that aren't currently captured in the model structures.
 
 ### `PlaybackCommand`
 

@@ -22,3 +22,47 @@ pub enum LoungeEvent {
     AutoplayUpNext(AutoplayUpNext),
     Unknown(String),
 }
+
+impl LoungeEvent {
+    // Get the name of the event type
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            LoungeEvent::StateChange(_) => "onStateChange",
+            LoungeEvent::NowPlaying(_) => "nowPlaying",
+            LoungeEvent::LoungeStatus(_) => "loungeStatus",
+            LoungeEvent::ScreenDisconnected => "loungeScreenDisconnected",
+            LoungeEvent::SessionEstablished => "sessionEstablished",
+            LoungeEvent::AdStateChange(_) => "onAdStateChange",
+            LoungeEvent::SubtitlesTrackChanged(_) => "onSubtitlesTrackChanged",
+            LoungeEvent::AutoplayModeChanged(_) => "onAutoplayModeChanged",
+            LoungeEvent::HasPreviousNextChanged(_) => "onHasPreviousNextChanged",
+            LoungeEvent::VideoQualityChanged(_) => "onVideoQualityChanged",
+            LoungeEvent::AudioTrackChanged(_) => "onAudioTrackChanged",
+            LoungeEvent::PlaylistModified(_) => "playlistModified",
+            LoungeEvent::AutoplayUpNext(_) => "autoplayUpNext",
+            LoungeEvent::Unknown(event_type) => {
+                // For Unknown events, we manually extract the event type from the string
+                // and return a static string to avoid lifetime issues
+                if event_type.contains("onAdStateChange") {
+                    "onAdStateChange"
+                } else if event_type.contains("onSubtitlesTrackChanged") {
+                    "onSubtitlesTrackChanged"
+                } else if event_type.contains("onAutoplayModeChanged") {
+                    "onAutoplayModeChanged"
+                } else if event_type.contains("onHasPreviousNextChanged") {
+                    "onHasPreviousNextChanged"
+                } else if event_type.contains("onVideoQualityChanged") {
+                    "onVideoQualityChanged"
+                } else if event_type.contains("onAudioTrackChanged") {
+                    "onAudioTrackChanged"
+                } else if event_type.contains("playlistModified") {
+                    "playlistModified"
+                } else if event_type.contains("autoplayUpNext") {
+                    "autoplayUpNext"
+                } else {
+                    "unknown"
+                }
+            }
+        }
+    }
+}
