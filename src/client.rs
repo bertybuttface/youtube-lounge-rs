@@ -37,7 +37,7 @@ use crate::models::{
     AdState, AudioTrackChanged, AutoplayModeChanged, AutoplayUpNext, Device, DeviceInfo,
     HasPreviousNextChanged, LoungeStatus, NowPlaying, PlaybackState, PlaylistModified, Screen,
     ScreenAvailabilityResponse, ScreenResponse, ScreensResponse, SubtitlesTrackChanged,
-    VideoQualityChanged,
+    VideoQualityChanged, VolumeChanged,
 };
 
 // Session state
@@ -991,6 +991,19 @@ async fn process_event_chunk(
                             }
 
                             let _ = sender.send(LoungeEvent::AutoplayUpNext(next));
+                        }
+                    }
+                    "onVolumeChanged" => {
+                        if let Ok(volume) = serde_json::from_value::<VolumeChanged>(payload.clone())
+                        {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Event [onVolumeChanged] payload: {}",
+                                    payload_json
+                                );
+                            }
+
+                            let _ = sender.send(LoungeEvent::VolumeChanged(volume));
                         }
                     }
                     _ => {

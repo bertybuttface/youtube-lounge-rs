@@ -245,3 +245,22 @@ pub struct AutoplayUpNext {
     #[serde(rename = "videoId")]
     pub video_id: String,
 }
+
+// Volume changed event
+#[derive(Debug, Clone, Deserialize)]
+pub struct VolumeChanged {
+    pub muted: String,
+    pub volume: String,
+}
+
+impl VolumeChanged {
+    /// Returns true if audio is muted
+    pub fn is_muted(&self) -> bool {
+        self.muted == "true"
+    }
+
+    /// Returns the volume level as an integer (0-100)
+    pub fn volume_level(&self) -> i32 {
+        self.volume.parse::<i32>().unwrap_or(0)
+    }
+}

@@ -1,6 +1,6 @@
 use youtube_lounge_rs::models::{
     AdState, AudioTrackChanged, AutoplayModeChanged, AutoplayUpNext, HasPreviousNextChanged,
-    PlaylistModified, SubtitlesTrackChanged, VideoData, VideoQualityChanged,
+    PlaylistModified, SubtitlesTrackChanged, VideoData, VideoQualityChanged, VolumeChanged,
 };
 use youtube_lounge_rs::{Device, LoungeEvent, NowPlaying, PlaybackState};
 
@@ -132,6 +132,14 @@ fn test_lounge_event_variants() {
     };
 
     let _event = LoungeEvent::AutoplayUpNext(up_next);
+
+    // Test VolumeChanged
+    let volume = VolumeChanged {
+        volume: "75".to_string(),
+        muted: "false".to_string(),
+    };
+
+    let _event = LoungeEvent::VolumeChanged(volume);
 }
 
 // Test LoungeEvent patterns
@@ -201,6 +209,10 @@ fn test_lounge_event_matching() {
         LoungeEvent::AutoplayUpNext(AutoplayUpNext {
             video_id: "".to_string(),
         }),
+        LoungeEvent::VolumeChanged(VolumeChanged {
+            volume: "50".to_string(),
+            muted: "false".to_string(),
+        }),
     ];
 
     // Just test that we can match on each type
@@ -220,8 +232,39 @@ fn test_lounge_event_matching() {
             LoungeEvent::AudioTrackChanged(_) => {}
             LoungeEvent::PlaylistModified(_) => {}
             LoungeEvent::AutoplayUpNext(_) => {}
+            LoungeEvent::VolumeChanged(_) => {}
         }
     }
+}
+
+#[test]
+fn test_volume_utility_methods() {
+    // Test VolumeChanged methods
+    let volume_normal = VolumeChanged {
+        volume: "50".to_string(),
+        muted: "false".to_string(),
+    };
+
+    assert_eq!(volume_normal.volume_level(), 50);
+    assert!(!volume_normal.is_muted());
+
+    // Test muted volume
+    let volume_muted = VolumeChanged {
+        volume: "25".to_string(),
+        muted: "true".to_string(),
+    };
+
+    assert_eq!(volume_muted.volume_level(), 25);
+    assert!(volume_muted.is_muted());
+
+    // Test invalid volume (should return 0)
+    let volume_invalid = VolumeChanged {
+        volume: "not_a_number".to_string(),
+        muted: "false".to_string(),
+    };
+
+    assert_eq!(volume_invalid.volume_level(), 0);
+    assert!(!volume_invalid.is_muted());
 }
 
 #[test]

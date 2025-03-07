@@ -327,6 +327,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Autoplay up next:");
                         println!("  Video ID: {}", next.video_id);
                     }
+                    LoungeEvent::VolumeChanged(volume) => {
+                        println!("Volume changed:");
+                        println!("  Volume level: {}", volume.volume_level());
+                        println!("  Muted: {}", volume.is_muted());
+                    }
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
