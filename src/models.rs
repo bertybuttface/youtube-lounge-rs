@@ -213,3 +213,16 @@ pub struct AudioTrackChanged {
     #[serde(rename = "videoId")]
     pub video_id: String,
 }
+
+// Playlist modified event
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistModified {
+    #[serde(rename = "currentIndex")]
+    pub current_index: String,
+    #[serde(rename = "firstVideoId")]
+    pub first_video_id: String,
+    #[serde(rename = "listId")]
+    pub list_id: String,
+    #[serde(rename = "videoId")]
+    pub video_id: String,
+}

@@ -1,6 +1,6 @@
 use crate::models::{
     AdState, AudioTrackChanged, AutoplayModeChanged, Device, HasPreviousNextChanged, NowPlaying,
-    PlaybackState, SubtitlesTrackChanged, VideoQualityChanged,
+    PlaybackState, PlaylistModified, SubtitlesTrackChanged, VideoQualityChanged,
 };
 
 // Event types for the callback
@@ -17,5 +17,6 @@ pub enum LoungeEvent {
     HasPreviousNextChanged(HasPreviousNextChanged),
     VideoQualityChanged(VideoQualityChanged),
     AudioTrackChanged(AudioTrackChanged),
+    PlaylistModified(PlaylistModified),
     Unknown(String),
 }

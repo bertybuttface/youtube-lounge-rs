@@ -1,6 +1,6 @@
 use youtube_lounge_rs::models::{
-    AdState, AudioTrackChanged, AutoplayModeChanged, HasPreviousNextChanged, SubtitlesTrackChanged,
-    VideoData, VideoQualityChanged,
+    AdState, AudioTrackChanged, AutoplayModeChanged, HasPreviousNextChanged, PlaylistModified,
+    SubtitlesTrackChanged, VideoData, VideoQualityChanged,
 };
 use youtube_lounge_rs::{Device, LoungeEvent, NowPlaying, PlaybackState};
 
@@ -115,6 +115,16 @@ fn test_lounge_event_variants() {
     };
 
     let _event = LoungeEvent::AudioTrackChanged(audio_track);
+
+    // Test PlaylistModified
+    let playlist = PlaylistModified {
+        current_index: "0".to_string(),
+        first_video_id: "dQw4w9WgXcQ".to_string(),
+        list_id: "RQdkpuO9KNHXPCTY5ouk6z1Yjc3sQ".to_string(),
+        video_id: "dQw4w9WgXcQ".to_string(),
+    };
+
+    let _event = LoungeEvent::PlaylistModified(playlist);
 }
 
 // Test LoungeEvent patterns
@@ -175,6 +185,12 @@ fn test_lounge_event_matching() {
             audio_track_id: "".to_string(),
             video_id: "".to_string(),
         }),
+        LoungeEvent::PlaylistModified(PlaylistModified {
+            current_index: "".to_string(),
+            first_video_id: "".to_string(),
+            list_id: "".to_string(),
+            video_id: "".to_string(),
+        }),
     ];
 
     // Just test that we can match on each type
@@ -192,6 +208,7 @@ fn test_lounge_event_matching() {
             LoungeEvent::HasPreviousNextChanged(_) => {}
             LoungeEvent::VideoQualityChanged(_) => {}
             LoungeEvent::AudioTrackChanged(_) => {}
+            LoungeEvent::PlaylistModified(_) => {}
         }
     }
 }
