@@ -223,3 +223,55 @@ fn test_lounge_event_matching() {
         }
     }
 }
+
+#[test]
+fn test_ad_utility_methods() {
+    // Test AdState methods
+    let ad_state = AdState {
+        content_video_id: "content123".to_string(),
+        is_skip_enabled: true,
+    };
+
+    assert!(ad_state.is_skippable());
+    assert_eq!(ad_state.get_content_video_id(), "content123");
+
+    // Test non-skippable ad
+    let non_skippable_ad = AdState {
+        content_video_id: "content456".to_string(),
+        is_skip_enabled: false,
+    };
+
+    assert!(!non_skippable_ad.is_skippable());
+
+    // Test LoungeEvent ad-related methods
+    let ad_event = LoungeEvent::AdStateChange(ad_state);
+    let state_event = LoungeEvent::StateChange(PlaybackState {
+        state: 1,
+        current_time: 0.0,
+        duration: 0.0,
+        seekable_start_time: 0.0,
+        seekable_end_time: 0.0,
+        video_id: "".to_string(),
+        volume: 0,
+        muted: false,
+        video_data: VideoData {
+            video_id: "".to_string(),
+            author: "".to_string(),
+            title: "".to_string(),
+            is_playable: false,
+        },
+    });
+
+    // Test is_showing_ad()
+    assert!(ad_event.is_showing_ad());
+    assert!(!state_event.is_showing_ad());
+
+    // Test ad_state()
+    assert!(ad_event.ad_state().is_some());
+    assert!(state_event.ad_state().is_none());
+
+    if let Some(state) = ad_event.ad_state() {
+        assert!(state.is_skippable());
+        assert_eq!(state.get_content_video_id(), "content123");
+    }
+}

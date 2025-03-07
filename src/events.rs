@@ -65,4 +65,21 @@ impl LoungeEvent {
             }
         }
     }
+
+    /// Returns true if an ad is currently being shown
+    ///
+    /// This is determined by checking if the event is an AdStateChange event,
+    /// which indicates that an ad is currently being displayed
+    pub fn is_showing_ad(&self) -> bool {
+        matches!(self, LoungeEvent::AdStateChange(_))
+    }
+
+    /// If this event is an AdStateChange, returns the AdState
+    /// Otherwise returns None
+    pub fn ad_state(&self) -> Option<&AdState> {
+        match self {
+            LoungeEvent::AdStateChange(state) => Some(state),
+            _ => None,
+        }
+    }
 }
