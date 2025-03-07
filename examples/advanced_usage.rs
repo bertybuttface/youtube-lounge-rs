@@ -266,6 +266,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     LoungeEvent::Unknown(event_type) => {
                         println!("Unknown event: {}", event_type);
                     }
+                    LoungeEvent::AdStateChange(ad_state) => {
+                        println!("Ad state change:");
+                        println!("  Content video ID: {}", ad_state.content_video_id);
+                        println!("  Skip enabled: {}", ad_state.is_skip_enabled);
+                    }
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
