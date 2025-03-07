@@ -184,3 +184,12 @@ pub struct AutoplayModeChanged {
     #[serde(rename = "autoplayMode")]
     pub autoplay_mode: String,
 }
+
+// Has previous/next changed event
+#[derive(Debug, Clone, Deserialize)]
+pub struct HasPreviousNextChanged {
+    #[serde(rename = "hasNext")]
+    pub has_next: String,
+    #[serde(rename = "hasPrevious")]
+    pub has_previous: String,
+}

@@ -81,6 +81,10 @@ while let Some(event) = rx.recv().await {
         LoungeEvent::AutoplayModeChanged(mode) => {
             println!("Autoplay mode changed to: {}", mode.autoplay_mode);
         },
+        LoungeEvent::HasPreviousNextChanged(nav) => {
+            println!("Navigation changed - Next: {}, Previous: {}", 
+                nav.has_next, nav.has_previous);
+        },
         // Handle other events...
         _ => {}
     }
@@ -212,6 +216,7 @@ Events received from the YouTube Lounge API:
 - `AdStateChange(AdState)`
 - `SubtitlesTrackChanged(SubtitlesTrackChanged)`
 - `AutoplayModeChanged(AutoplayModeChanged)`
+- `HasPreviousNextChanged(HasPreviousNextChanged)`
 - `Unknown(String)`
 
 ## License

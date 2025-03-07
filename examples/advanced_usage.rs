@@ -281,6 +281,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Autoplay mode changed:");
                         println!("  Mode: {}", mode.autoplay_mode);
                     }
+                    LoungeEvent::HasPreviousNextChanged(nav) => {
+                        println!("Navigation state changed:");
+                        println!("  Has next: {}", nav.has_next);
+                        println!("  Has previous: {}", nav.has_previous);
+                    }
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
