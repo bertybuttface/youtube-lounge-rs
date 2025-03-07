@@ -17,7 +17,17 @@ use tokio::time::sleep;
 // Create a static shared HTTP client for better connection pooling and DNS caching
 static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| {
     ClientBuilder::new()
-        .timeout(Duration::from_secs(300))
+        .timeout(Duration::from_secs(300)) // 5 minute timeout for regular requests
+        .pool_idle_timeout(Some(Duration::from_secs(90))) // Keep connections alive longer
+        .build()
+        .unwrap()
+});
+
+// Create a separate client for long polling with a timeout slightly longer than the heartbeat interval
+// The YouTube API should send at least a NOOP message every 30 minutes
+static LONG_POLL_CLIENT: Lazy<Client> = Lazy::new(|| {
+    ClientBuilder::new()
+        .timeout(Duration::from_secs(32 * 60)) // 32 minutes timeout
         .pool_idle_timeout(Some(Duration::from_secs(90))) // Keep connections alive longer
         .build()
         .unwrap()
@@ -400,7 +410,6 @@ impl LoungeClient {
     // Subscribe to events from the screen
     async fn subscribe_to_events(&self) -> Result<(), LoungeError> {
         let session_state = self.session_state.clone();
-        let client = self.client.clone();
         let device_name = self.device_name.clone();
         let lounge_token = self.lounge_token.clone();
         let event_sender = self.event_sender.clone();
@@ -456,8 +465,8 @@ impl LoungeClient {
                 // Create parameter map
                 let param_map: HashMap<_, _> = params.into_iter().collect();
 
-                // Make the request
-                let response = match client
+                // Make the request using LONG_POLL_CLIENT for long polling connections
+                let response = match LONG_POLL_CLIENT
                     .get("https://www.youtube.com/api/lounge/bc/bind")
                     .query(&param_map)
                     .send()
