@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::StreamExt;
+use once_cell::sync::Lazy;
 use reqwest::{Client, ClientBuilder};
 use serde_json;
 use std::collections::HashMap;
@@ -12,6 +13,15 @@ use tokio::sync::{
 };
 use tokio::task;
 use tokio::time::sleep;
+
+// Create a static shared HTTP client for better connection pooling and DNS caching
+static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| {
+    ClientBuilder::new()
+        .timeout(Duration::from_secs(300))
+        .pool_idle_timeout(Some(Duration::from_secs(90))) // Keep connections alive longer
+        .build()
+        .unwrap()
+});
 
 use crate::commands::{get_command_name, PlaybackCommand};
 use crate::error::LoungeError;
@@ -70,10 +80,8 @@ pub struct LoungeClient {
 
 impl LoungeClient {
     pub fn new(screen_id: &str, lounge_token: &str, device_name: &str) -> Self {
-        let client = ClientBuilder::new()
-            .timeout(Duration::from_secs(300))
-            .build()
-            .unwrap();
+        // Use the shared client to benefit from connection pooling and DNS caching
+        let client = SHARED_CLIENT.clone();
 
         // Create a broadcast channel with capacity for 100 events
         let (tx, _rx) = broadcast::channel(100);
@@ -151,10 +159,10 @@ impl LoungeClient {
 
     // Pair with a screen using a pairing code
     pub async fn pair_with_screen(pairing_code: &str) -> Result<Screen, LoungeError> {
-        let client = Client::new();
+        // Use shared client for better connection pooling
         let params = [("pairing_code", pairing_code)];
 
-        let response = client
+        let response = SHARED_CLIENT
             .post("https://www.youtube.com/api/lounge/pairing/get_screen")
             .form(&params)
             .send()
@@ -173,10 +181,10 @@ impl LoungeClient {
 
     // Refresh the lounge token
     pub async fn refresh_lounge_token(screen_id: &str) -> Result<Screen, LoungeError> {
-        let client = Client::new();
+        // Use shared client for better connection pooling
         let params = [("screen_ids", screen_id)];
 
-        let response = client
+        let response = SHARED_CLIENT
             .post("https://www.youtube.com/api/lounge/pairing/get_lounge_token_batch")
             .form(&params)
             .send()
