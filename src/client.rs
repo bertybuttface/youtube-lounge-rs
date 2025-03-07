@@ -873,7 +873,10 @@ async fn process_event_chunk(
                                     })
                                     .collect();
 
-                                let _ = sender.send(LoungeEvent::LoungeStatus(devices_with_info));
+                                let _ = sender.send(LoungeEvent::LoungeStatus(
+                                    devices_with_info,
+                                    status.queue_id.clone(),
+                                ));
                             }
                         }
                     }

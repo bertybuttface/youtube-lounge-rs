@@ -160,6 +160,8 @@ pub struct Device {
 #[derive(Debug, Clone, Deserialize)]
 pub struct LoungeStatus {
     pub devices: String,
+    #[serde(rename = "queueId", default)]
+    pub queue_id: Option<String>,
 }
 
 // Ad state change event
