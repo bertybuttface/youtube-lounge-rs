@@ -226,3 +226,10 @@ pub struct PlaylistModified {
     #[serde(rename = "videoId")]
     pub video_id: String,
 }
+
+// Autoplay up next event
+#[derive(Debug, Clone, Deserialize)]
+pub struct AutoplayUpNext {
+    #[serde(rename = "videoId")]
+    pub video_id: String,
+}
