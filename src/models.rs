@@ -171,6 +171,18 @@ pub struct AdState {
     pub is_skip_enabled: bool,
 }
 
+impl AdState {
+    /// Returns true if the ad can be skipped
+    pub fn is_skippable(&self) -> bool {
+        self.is_skip_enabled
+    }
+
+    /// Returns the ID of the video content that will play after the ad
+    pub fn get_content_video_id(&self) -> &str {
+        &self.content_video_id
+    }
+}
+
 // Subtitles track changed event
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubtitlesTrackChanged {
