@@ -1,4 +1,6 @@
-use crate::models::{AdState, Device, NowPlaying, PlaybackState, SubtitlesTrackChanged};
+use crate::models::{
+    AdState, AutoplayModeChanged, Device, NowPlaying, PlaybackState, SubtitlesTrackChanged,
+};
 
 // Event types for the callback
 #[derive(Debug, Clone)]
@@ -10,5 +12,6 @@ pub enum LoungeEvent {
     SessionEstablished,
     AdStateChange(AdState),
     SubtitlesTrackChanged(SubtitlesTrackChanged),
+    AutoplayModeChanged(AutoplayModeChanged),
     Unknown(String),
 }

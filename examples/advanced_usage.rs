@@ -277,6 +277,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Subtitles track changed:");
                         println!("  Video ID: {}", track.video_id);
                     }
+                    LoungeEvent::AutoplayModeChanged(mode) => {
+                        println!("Autoplay mode changed:");
+                        println!("  Mode: {}", mode.autoplay_mode);
+                    }
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {

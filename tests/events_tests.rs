@@ -1,4 +1,4 @@
-use youtube_lounge_rs::models::{AdState, SubtitlesTrackChanged, VideoData};
+use youtube_lounge_rs::models::{AdState, AutoplayModeChanged, SubtitlesTrackChanged, VideoData};
 use youtube_lounge_rs::{Device, LoungeEvent, NowPlaying, PlaybackState};
 
 // Test that we can create different LoungeEvent types
@@ -80,6 +80,13 @@ fn test_lounge_event_variants() {
     };
 
     let _event = LoungeEvent::SubtitlesTrackChanged(subtitles_track);
+
+    // Test AutoplayModeChanged
+    let autoplay_mode = AutoplayModeChanged {
+        autoplay_mode: "ENABLED".to_string(),
+    };
+
+    let _event = LoungeEvent::AutoplayModeChanged(autoplay_mode);
 }
 
 // Test LoungeEvent patterns
@@ -124,6 +131,9 @@ fn test_lounge_event_matching() {
         LoungeEvent::SubtitlesTrackChanged(SubtitlesTrackChanged {
             video_id: "".to_string(),
         }),
+        LoungeEvent::AutoplayModeChanged(AutoplayModeChanged {
+            autoplay_mode: "".to_string(),
+        }),
     ];
 
     // Just test that we can match on each type
@@ -137,6 +147,7 @@ fn test_lounge_event_matching() {
             LoungeEvent::Unknown(_) => {}
             LoungeEvent::AdStateChange(_) => {}
             LoungeEvent::SubtitlesTrackChanged(_) => {}
+            LoungeEvent::AutoplayModeChanged(_) => {}
         }
     }
 }

@@ -177,3 +177,10 @@ pub struct SubtitlesTrackChanged {
     #[serde(rename = "videoId")]
     pub video_id: String,
 }
+
+// Autoplay mode changed event
+#[derive(Debug, Clone, Deserialize)]
+pub struct AutoplayModeChanged {
+    #[serde(rename = "autoplayMode")]
+    pub autoplay_mode: String,
+}
