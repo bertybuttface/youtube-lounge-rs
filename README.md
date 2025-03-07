@@ -93,6 +93,10 @@ while let Some(event) = rx.recv().await {
             println!("Audio track changed to {} for {}", 
                 audio.audio_track_id, audio.video_id);
         },
+        LoungeEvent::PlaylistModified(playlist) => {
+            println!("Playlist modified: Video {} in list {}", 
+                playlist.video_id, playlist.list_id);
+        },
         // Handle other events...
         _ => {}
     }
@@ -227,6 +231,7 @@ Events received from the YouTube Lounge API:
 - `HasPreviousNextChanged(HasPreviousNextChanged)`
 - `VideoQualityChanged(VideoQualityChanged)`
 - `AudioTrackChanged(AudioTrackChanged)`
+- `PlaylistModified(PlaylistModified)`
 - `Unknown(String)`
 
 ## License
