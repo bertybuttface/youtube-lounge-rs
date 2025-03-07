@@ -1,6 +1,7 @@
 use youtube_lounge_rs::models::{
     AdState, AudioTrackChanged, AutoplayModeChanged, AutoplayUpNext, HasPreviousNextChanged,
-    PlaylistModified, SubtitlesTrackChanged, VideoData, VideoQualityChanged, VolumeChanged,
+    LoungeStatus, PlaylistModified, SubtitlesTrackChanged, VideoData, VideoQualityChanged,
+    VolumeChanged,
 };
 use youtube_lounge_rs::{Device, LoungeEvent, NowPlaying, PlaybackState};
 
@@ -61,7 +62,7 @@ fn test_lounge_event_variants() {
         },
     ];
 
-    let _event = LoungeEvent::LoungeStatus(devices);
+    let _event = LoungeEvent::LoungeStatus(devices, Some("RQ1234".to_string()));
 
     // Test ScreenDisconnected
     let _event = LoungeEvent::ScreenDisconnected;
@@ -174,7 +175,7 @@ fn test_lounge_event_matching() {
             state: 0,
             video_data,
         }),
-        LoungeEvent::LoungeStatus(vec![]),
+        LoungeEvent::LoungeStatus(vec![], None),
         LoungeEvent::ScreenDisconnected,
         LoungeEvent::Unknown("".to_string()),
         LoungeEvent::AdStateChange(AdState {
@@ -221,7 +222,7 @@ fn test_lounge_event_matching() {
             LoungeEvent::SessionEstablished => {}
             LoungeEvent::StateChange(_) => {}
             LoungeEvent::NowPlaying(_) => {}
-            LoungeEvent::LoungeStatus(_) => {}
+            LoungeEvent::LoungeStatus(_, _) => {}
             LoungeEvent::ScreenDisconnected => {}
             LoungeEvent::Unknown(_) => {}
             LoungeEvent::AdStateChange(_) => {}
@@ -265,6 +266,25 @@ fn test_volume_utility_methods() {
 
     assert_eq!(volume_invalid.volume_level(), 0);
     assert!(!volume_invalid.is_muted());
+}
+
+#[test]
+fn test_lounge_status_queue_id() {
+    // Test LoungeStatus with queue_id
+    let status_with_queue = LoungeStatus {
+        devices: "[]".to_string(),
+        queue_id: Some("RQ1234567890".to_string()),
+    };
+
+    assert_eq!(status_with_queue.queue_id, Some("RQ1234567890".to_string()));
+
+    // Test LoungeStatus without queue_id
+    let status_without_queue = LoungeStatus {
+        devices: "[]".to_string(),
+        queue_id: None,
+    };
+
+    assert_eq!(status_without_queue.queue_id, None);
 }
 
 #[test]

@@ -266,7 +266,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  Playlist: {}", list_id);
                         }
                     }
-                    LoungeEvent::LoungeStatus(devices) => {
+                    LoungeEvent::LoungeStatus(devices, queue_id) => {
                         println!("Lounge status update - Connected devices:");
                         for device in devices {
                             println!("  Device: {} ({})", device.name, device.device_type);
@@ -276,6 +276,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     info.brand, info.model, info.device_type
                                 );
                             }
+                        }
+
+                        // Display the queue ID if available
+                        if let Some(id) = queue_id {
+                            println!("  Queue ID: {}", id);
                         }
                     }
                     LoungeEvent::ScreenDisconnected => {

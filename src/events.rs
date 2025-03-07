@@ -9,7 +9,7 @@ use crate::models::{
 pub enum LoungeEvent {
     StateChange(PlaybackState),
     NowPlaying(NowPlaying),
-    LoungeStatus(Vec<Device>),
+    LoungeStatus(Vec<Device>, Option<String>), // Add queue_id parameter
     ScreenDisconnected,
     SessionEstablished,
     AdStateChange(AdState),
@@ -30,7 +30,7 @@ impl LoungeEvent {
         match self {
             LoungeEvent::StateChange(_) => "onStateChange",
             LoungeEvent::NowPlaying(_) => "nowPlaying",
-            LoungeEvent::LoungeStatus(_) => "loungeStatus",
+            LoungeEvent::LoungeStatus(_, _) => "loungeStatus",
             LoungeEvent::ScreenDisconnected => "loungeScreenDisconnected",
             LoungeEvent::SessionEstablished => "sessionEstablished",
             LoungeEvent::AdStateChange(_) => "onAdStateChange",
