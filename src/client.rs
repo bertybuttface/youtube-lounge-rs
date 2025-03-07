@@ -48,6 +48,8 @@ struct SessionState {
     aid: Option<String>,
     rid: i32,
     command_offset: i32,
+    // Flag to enable debug mode
+    debug_mode: bool,
 }
 
 impl SessionState {
@@ -58,6 +60,7 @@ impl SessionState {
             aid: None,
             rid: 1,
             command_offset: 0,
+            debug_mode: false,
         }
     }
 
@@ -114,6 +117,18 @@ impl LoungeClient {
         F: Fn(&str, &str) + Send + Sync + 'static,
     {
         self.token_refresh_callback = Some(Box::new(callback));
+    }
+
+    /// Enable debug mode to get raw JSON payloads with events
+    pub fn enable_debug_mode(&mut self) {
+        let mut state = self.session_state.lock().unwrap();
+        state.debug_mode = true;
+    }
+
+    /// Disable debug mode
+    pub fn disable_debug_mode(&mut self) {
+        let mut state = self.session_state.lock().unwrap();
+        state.debug_mode = false;
     }
 
     /// Internal method to refresh the token
@@ -767,6 +782,11 @@ async fn process_event_chunk(
     session_state: &Arc<Mutex<SessionState>>,
     sender: &broadcast::Sender<LoungeEvent>,
 ) {
+    // Check if debug mode is enabled
+    let debug_mode = {
+        let state = session_state.lock().unwrap();
+        state.debug_mode
+    };
     if chunk.trim().is_empty() {
         return;
     }
@@ -803,11 +823,17 @@ async fn process_event_chunk(
                 // Get a reference to the payload
                 let payload = &event_array[1];
 
+                let payload_json = payload.to_string();
+
                 match event_type {
                     "onStateChange" => {
                         // Convert JSON value to PlaybackState directly
                         if let Ok(state) = serde_json::from_value::<PlaybackState>(payload.clone())
                         {
+                            if debug_mode {
+                                println!("DEBUG: Event [onStateChange] payload: {}", payload_json);
+                            }
+
                             let _ = sender.send(LoungeEvent::StateChange(state));
                         }
                     }
@@ -815,12 +841,20 @@ async fn process_event_chunk(
                         if let Ok(now_playing) =
                             serde_json::from_value::<NowPlaying>(payload.clone())
                         {
+                            if debug_mode {
+                                println!("DEBUG: Event [nowPlaying] payload: {}", payload_json);
+                            }
+
                             let _ = sender.send(LoungeEvent::NowPlaying(now_playing));
                         }
                     }
                     "loungeStatus" => {
                         if let Ok(status) = serde_json::from_value::<LoungeStatus>(payload.clone())
                         {
+                            if debug_mode {
+                                println!("DEBUG: Event [loungeStatus] payload: {}", payload_json);
+                            }
+
                             // Parse nested JSON - try to avoid unnecessary string conversions
                             let devices_result =
                                 serde_json::from_str::<Vec<Device>>(&status.devices);
@@ -844,10 +878,24 @@ async fn process_event_chunk(
                         }
                     }
                     "loungeScreenDisconnected" => {
+                        if debug_mode {
+                            println!(
+                                "DEBUG: Event [loungeScreenDisconnected] payload: {}",
+                                payload_json
+                            );
+                        }
+
                         let _ = sender.send(LoungeEvent::ScreenDisconnected);
                     }
                     "onAdStateChange" => {
                         if let Ok(ad_state) = serde_json::from_value::<AdState>(payload.clone()) {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Event [onAdStateChange] payload: {}",
+                                    payload_json
+                                );
+                            }
+
                             let _ = sender.send(LoungeEvent::AdStateChange(ad_state));
                         }
                     }
@@ -855,6 +903,13 @@ async fn process_event_chunk(
                         if let Ok(track) =
                             serde_json::from_value::<SubtitlesTrackChanged>(payload.clone())
                         {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Event [onSubtitlesTrackChanged] payload: {}",
+                                    payload_json
+                                );
+                            }
+
                             let _ = sender.send(LoungeEvent::SubtitlesTrackChanged(track));
                         }
                     }
@@ -862,6 +917,13 @@ async fn process_event_chunk(
                         if let Ok(mode) =
                             serde_json::from_value::<AutoplayModeChanged>(payload.clone())
                         {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Event [onAutoplayModeChanged] payload: {}",
+                                    payload_json
+                                );
+                            }
+
                             let _ = sender.send(LoungeEvent::AutoplayModeChanged(mode));
                         }
                     }
@@ -869,6 +931,13 @@ async fn process_event_chunk(
                         if let Ok(has_prev_next) =
                             serde_json::from_value::<HasPreviousNextChanged>(payload.clone())
                         {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Event [onHasPreviousNextChanged] payload: {}",
+                                    payload_json
+                                );
+                            }
+
                             let _ = sender.send(LoungeEvent::HasPreviousNextChanged(has_prev_next));
                         }
                     }
@@ -876,6 +945,13 @@ async fn process_event_chunk(
                         if let Ok(quality) =
                             serde_json::from_value::<VideoQualityChanged>(payload.clone())
                         {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Event [onVideoQualityChanged] payload: {}",
+                                    payload_json
+                                );
+                            }
+
                             let _ = sender.send(LoungeEvent::VideoQualityChanged(quality));
                         }
                     }
@@ -883,6 +959,13 @@ async fn process_event_chunk(
                         if let Ok(audio_track) =
                             serde_json::from_value::<AudioTrackChanged>(payload.clone())
                         {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Event [onAudioTrackChanged] payload: {}",
+                                    payload_json
+                                );
+                            }
+
                             let _ = sender.send(LoungeEvent::AudioTrackChanged(audio_track));
                         }
                     }
@@ -890,18 +973,33 @@ async fn process_event_chunk(
                         if let Ok(playlist) =
                             serde_json::from_value::<PlaylistModified>(payload.clone())
                         {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Event [playlistModified] payload: {}",
+                                    payload_json
+                                );
+                            }
+
                             let _ = sender.send(LoungeEvent::PlaylistModified(playlist));
                         }
                     }
                     "autoplayUpNext" => {
                         if let Ok(next) = serde_json::from_value::<AutoplayUpNext>(payload.clone())
                         {
+                            if debug_mode {
+                                println!("DEBUG: Event [autoplayUpNext] payload: {}", payload_json);
+                            }
+
                             let _ = sender.send(LoungeEvent::AutoplayUpNext(next));
                         }
                     }
                     _ => {
                         // Unknown event - include payload for debugging
                         let event_with_payload = format!("{} - payload: {}", event_type, payload);
+                        println!(
+                            "DEBUG: Unknown event [{}] payload: {}",
+                            event_type, payload_json
+                        );
                         let _ = sender.send(LoungeEvent::Unknown(event_with_payload));
                     }
                 }
