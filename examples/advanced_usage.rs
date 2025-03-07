@@ -292,6 +292,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Available levels: {}", quality.available_quality_levels);
                         println!("  Video ID: {}", quality.video_id);
                     }
+                    LoungeEvent::AudioTrackChanged(audio) => {
+                        println!("Audio track changed:");
+                        println!("  Audio track ID: {}", audio.audio_track_id);
+                        println!("  Video ID: {}", audio.video_id);
+                    }
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
