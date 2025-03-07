@@ -857,8 +857,9 @@ async fn process_event_chunk(
                         }
                     }
                     _ => {
-                        // Unknown event - avoid allocation for common events
-                        let _ = sender.send(LoungeEvent::Unknown(event_type.to_string()));
+                        // Unknown event - include payload for debugging
+                        let event_with_payload = format!("{} - payload: {}", event_type, payload);
+                        let _ = sender.send(LoungeEvent::Unknown(event_with_payload));
                     }
                 }
             }

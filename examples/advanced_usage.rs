@@ -263,8 +263,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Screen disconnected");
                         break;
                     }
-                    LoungeEvent::Unknown(event_type) => {
-                        println!("Unknown event: {}", event_type);
+                    LoungeEvent::Unknown(event_info) => {
+                        println!("======= UNKNOWN EVENT =======");
+                        println!("{}", event_info);
+                        println!("=============================");
                     }
                     LoungeEvent::AdStateChange(ad_state) => {
                         println!("Ad state change:");

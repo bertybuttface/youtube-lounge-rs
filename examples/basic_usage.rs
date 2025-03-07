@@ -63,7 +63,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         println!("Screen disconnected");
                         break;
                     }
-                    _ => println!("Received event: {:?}", event),
+                    LoungeEvent::Unknown(event_info) => {
+                        println!("======= UNKNOWN EVENT =======");
+                        println!("{}", event_info);
+                        println!("=============================");
+                    }
+                    _ => println!("Other event: {:?}", event),
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
