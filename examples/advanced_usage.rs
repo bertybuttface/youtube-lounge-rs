@@ -304,6 +304,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  List ID: {}", playlist.list_id);
                         println!("  Video ID: {}", playlist.video_id);
                     }
+                    LoungeEvent::AutoplayUpNext(next) => {
+                        println!("Autoplay up next:");
+                        println!("  Video ID: {}", next.video_id);
+                    }
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
