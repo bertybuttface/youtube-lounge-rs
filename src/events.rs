@@ -1,7 +1,7 @@
 use crate::models::{
     AdState, AudioTrackChanged, AutoplayModeChanged, AutoplayUpNext, Device,
     HasPreviousNextChanged, NowPlaying, PlaybackState, PlaylistModified, SubtitlesTrackChanged,
-    VideoQualityChanged,
+    VideoQualityChanged, VolumeChanged,
 };
 
 // Event types for the callback
@@ -20,6 +20,7 @@ pub enum LoungeEvent {
     AudioTrackChanged(AudioTrackChanged),
     PlaylistModified(PlaylistModified),
     AutoplayUpNext(AutoplayUpNext),
+    VolumeChanged(VolumeChanged),
     Unknown(String),
 }
 
@@ -40,6 +41,7 @@ impl LoungeEvent {
             LoungeEvent::AudioTrackChanged(_) => "onAudioTrackChanged",
             LoungeEvent::PlaylistModified(_) => "playlistModified",
             LoungeEvent::AutoplayUpNext(_) => "autoplayUpNext",
+            LoungeEvent::VolumeChanged(_) => "onVolumeChanged",
             LoungeEvent::Unknown(event_type) => {
                 // For Unknown events, we manually extract the event type from the string
                 // and return a static string to avoid lifetime issues
@@ -59,6 +61,8 @@ impl LoungeEvent {
                     "playlistModified"
                 } else if event_type.contains("autoplayUpNext") {
                     "autoplayUpNext"
+                } else if event_type.contains("onVolumeChanged") {
+                    "onVolumeChanged"
                 } else {
                     "unknown"
                 }
