@@ -7,10 +7,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{
-    broadcast,
-    mpsc::{self, Receiver},
-};
+use tokio::sync::broadcast;
 use tokio::task;
 use tokio::time::sleep;
 
@@ -134,37 +131,11 @@ impl LoungeClient {
     }
 
     // Get the event receiver for listening to events
-    pub fn event_receiver(&self) -> Receiver<LoungeEvent> {
-        // Create a new mpsc channel for the client
-        let (tx, rx) = mpsc::channel(100);
-
-        // Subscribe to the broadcast channel
-        let mut broadcast_rx = self.event_sender.subscribe();
-
-        // Forward messages from broadcast to the client's channel
-        task::spawn(async move {
-            loop {
-                match broadcast_rx.recv().await {
-                    Ok(event) => {
-                        // Forward the event to the client
-                        if tx.send(event).await.is_err() {
-                            // Client has dropped their receiver, stop forwarding
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        // Broadcast channel closed
-                        break;
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        // Client is lagging behind, continue anyway
-                        continue;
-                    }
-                }
-            }
-        });
-
-        rx
+    // This returns a broadcast::Receiver directly, eliminating the extra channel hop
+    pub fn event_receiver(&self) -> broadcast::Receiver<LoungeEvent> {
+        // Subscribe directly to the broadcast channel
+        // This avoids the overhead of spawning a task and forwarding messages
+        self.event_sender.subscribe()
     }
 
     // Pair with a screen using a pairing code

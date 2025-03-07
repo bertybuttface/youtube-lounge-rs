@@ -218,53 +218,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn a task to handle events
     let event_handle = tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                LoungeEvent::SessionEstablished => {
-                    println!("Session established");
-                }
-                LoungeEvent::StateChange(state) => {
-                    println!("Playback state changed:");
-                    println!(
-                        "  Video: {} - {}",
-                        state.video_data.title, state.video_data.author
-                    );
-                    println!(
-                        "  Position: {:.2}/{:.2}",
-                        state.current_time, state.duration
-                    );
-                    println!("  State: {}", state.state_name());
-                }
-                LoungeEvent::NowPlaying(now_playing) => {
-                    println!("Now playing:");
-                    println!(
-                        "  Video: {} - {}",
-                        now_playing.video_data.title, now_playing.video_data.author
-                    );
-                    println!("  Video ID: {}", now_playing.video_id);
-                    if let Some(list_id) = now_playing.list_id {
-                        println!("  Playlist: {}", list_id);
+        loop {
+            match rx.recv().await {
+                Ok(event) => match event {
+                    LoungeEvent::SessionEstablished => {
+                        println!("Session established");
                     }
-                }
-                LoungeEvent::LoungeStatus(devices) => {
-                    println!("Lounge status update - Connected devices:");
-                    for device in devices {
-                        println!("  Device: {} ({})", device.name, device.device_type);
-                        if let Some(info) = device.device_info {
-                            println!(
-                                "    Brand: {}, Model: {}, Type: {}",
-                                info.brand, info.model, info.device_type
-                            );
+                    LoungeEvent::StateChange(state) => {
+                        println!("Playback state changed:");
+                        println!(
+                            "  Video: {} - {}",
+                            state.video_data.title, state.video_data.author
+                        );
+                        println!(
+                            "  Position: {:.2}/{:.2}",
+                            state.current_time, state.duration
+                        );
+                        println!("  State: {}", state.state_name());
+                    }
+                    LoungeEvent::NowPlaying(now_playing) => {
+                        println!("Now playing:");
+                        println!(
+                            "  Video: {} - {}",
+                            now_playing.video_data.title, now_playing.video_data.author
+                        );
+                        println!("  Video ID: {}", now_playing.video_id);
+                        if let Some(list_id) = now_playing.list_id {
+                            println!("  Playlist: {}", list_id);
                         }
                     }
-                }
-                LoungeEvent::ScreenDisconnected => {
-                    println!("Screen disconnected");
-                    break;
-                }
-                LoungeEvent::Unknown(event_type) => {
-                    println!("Unknown event: {}", event_type);
-                }
+                    LoungeEvent::LoungeStatus(devices) => {
+                        println!("Lounge status update - Connected devices:");
+                        for device in devices {
+                            println!("  Device: {} ({})", device.name, device.device_type);
+                            if let Some(info) = device.device_info {
+                                println!(
+                                    "    Brand: {}, Model: {}, Type: {}",
+                                    info.brand, info.model, info.device_type
+                                );
+                            }
+                        }
+                    }
+                    LoungeEvent::ScreenDisconnected => {
+                        println!("Screen disconnected");
+                        break;
+                    }
+                    LoungeEvent::Unknown(event_type) => {
+                        println!("Unknown event: {}", event_type);
+                    }
+                },
+                Err(e) => match e {
+                    tokio::sync::broadcast::error::RecvError::Closed => {
+                        println!("Event channel closed");
+                        break;
+                    }
+                    tokio::sync::broadcast::error::RecvError::Lagged(missed) => {
+                        println!(
+                            "Warning: Event receiver lagging behind, missed {} events",
+                            missed
+                        );
+                    }
+                },
             }
         }
     });

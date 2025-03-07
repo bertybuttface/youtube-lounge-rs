@@ -50,15 +50,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Step 6: Spawn a task to handle events from the TV
     tokio::spawn(async move {
-        while let Some(event) = receiver.recv().await {
-            match event {
-                LoungeEvent::NowPlaying(np) => {
-                    println!("Now playing: {}", np.video_data.title);
-                }
-                LoungeEvent::StateChange(state) => {
-                    println!("State changed: {}", state.state_name());
-                }
-                _ => println!("Received event: {:?}", event),
+        loop {
+            match receiver.recv().await {
+                Ok(event) => match event {
+                    LoungeEvent::NowPlaying(np) => {
+                        println!("Now playing: {}", np.video_data.title);
+                    }
+                    LoungeEvent::StateChange(state) => {
+                        println!("State changed: {}", state.state_name());
+                    }
+                    LoungeEvent::ScreenDisconnected => {
+                        println!("Screen disconnected");
+                        break;
+                    }
+                    _ => println!("Received event: {:?}", event),
+                },
+                Err(e) => match e {
+                    tokio::sync::broadcast::error::RecvError::Closed => {
+                        println!("Event channel closed");
+                        break;
+                    }
+                    tokio::sync::broadcast::error::RecvError::Lagged(missed) => {
+                        println!("Missed {} events due to lagging", missed);
+                    }
+                },
             }
         }
     });

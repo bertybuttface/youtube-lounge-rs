@@ -1,5 +1,3 @@
-use tokio::sync::mpsc;
-
 use youtube_lounge_rs::{LoungeClient, LoungeEvent};
 
 // Test the client constructor
@@ -83,40 +81,26 @@ impl EventEmitter {
 // Test event receiver forwards events correctly
 #[tokio::test]
 async fn test_event_receiver() {
-    // This is a more complex test that requires direct access to the client internals
-    // We test that a receiver gets events from the broadcast channel
+    // This test now directly uses the broadcast channel
     let emitter = EventEmitter::new();
 
-    // Create a receiver from the broadcast sender
-    let mut receiver = {
-        let (tx, rx) = mpsc::channel(100);
-        let mut broadcast_rx = emitter.get_sender().subscribe();
-
-        // Forward events from broadcast to mpsc channel
-        tokio::spawn(async move {
-            while let Ok(event) = broadcast_rx.recv().await {
-                if tx.send(event).await.is_err() {
-                    break;
-                }
-            }
-        });
-
-        rx
-    };
+    // Get a receiver directly from the broadcast channel
+    let mut receiver = emitter.get_sender().subscribe();
 
     // Emit a test event
     emitter.emit(LoungeEvent::SessionEstablished);
 
     // Check that the receiver gets the event
-    if let Some(event) = receiver.recv().await {
-        match event {
-            LoungeEvent::SessionEstablished => {
-                // Test passed
+    match receiver.recv().await {
+        Ok(event) => {
+            match event {
+                LoungeEvent::SessionEstablished => {
+                    // Test passed
+                }
+                _ => panic!("Received wrong event type"),
             }
-            _ => panic!("Received wrong event type"),
         }
-    } else {
-        panic!("Did not receive event");
+        Err(_) => panic!("Did not receive event"),
     }
 }
 
