@@ -1,4 +1,4 @@
-use youtube_lounge_rs::models::VideoData;
+use youtube_lounge_rs::models::{AdState, VideoData};
 use youtube_lounge_rs::{Device, LoungeEvent, NowPlaying, PlaybackState};
 
 // Test that we can create different LoungeEvent types
@@ -65,6 +65,14 @@ fn test_lounge_event_variants() {
 
     // Test Unknown
     let _event = LoungeEvent::Unknown("TestEvent".to_string());
+
+    // Test AdStateChange
+    let ad_state = AdState {
+        content_video_id: "adVideoId123".to_string(),
+        is_skip_enabled: true,
+    };
+
+    let _event = LoungeEvent::AdStateChange(ad_state);
 }
 
 // Test LoungeEvent patterns
@@ -102,6 +110,10 @@ fn test_lounge_event_matching() {
         LoungeEvent::LoungeStatus(vec![]),
         LoungeEvent::ScreenDisconnected,
         LoungeEvent::Unknown("".to_string()),
+        LoungeEvent::AdStateChange(AdState {
+            content_video_id: "".to_string(),
+            is_skip_enabled: false,
+        }),
     ];
 
     // Just test that we can match on each type
@@ -113,6 +125,7 @@ fn test_lounge_event_matching() {
             LoungeEvent::LoungeStatus(_) => {}
             LoungeEvent::ScreenDisconnected => {}
             LoungeEvent::Unknown(_) => {}
+            LoungeEvent::AdStateChange(_) => {}
         }
     }
 }

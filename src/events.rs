@@ -1,4 +1,4 @@
-use crate::models::{Device, NowPlaying, PlaybackState};
+use crate::models::{AdState, Device, NowPlaying, PlaybackState};
 
 // Event types for the callback
 #[derive(Debug, Clone)]
@@ -8,5 +8,6 @@ pub enum LoungeEvent {
     LoungeStatus(Vec<Device>),
     ScreenDisconnected,
     SessionEstablished,
+    AdStateChange(AdState),
     Unknown(String),
 }

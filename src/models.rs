@@ -161,3 +161,12 @@ pub struct Device {
 pub struct LoungeStatus {
     pub devices: String,
 }
+
+// Ad state change event
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdState {
+    #[serde(rename = "contentVideoId")]
+    pub content_video_id: String,
+    #[serde(rename = "isSkipEnabled")]
+    pub is_skip_enabled: bool,
+}

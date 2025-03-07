@@ -34,7 +34,7 @@ use crate::commands::{get_command_name, PlaybackCommand};
 use crate::error::LoungeError;
 use crate::events::LoungeEvent;
 use crate::models::{
-    Device, DeviceInfo, LoungeStatus, NowPlaying, PlaybackState, Screen,
+    AdState, Device, DeviceInfo, LoungeStatus, NowPlaying, PlaybackState, Screen,
     ScreenAvailabilityResponse, ScreenResponse, ScreensResponse,
 };
 
@@ -843,6 +843,11 @@ async fn process_event_chunk(
                     }
                     "loungeScreenDisconnected" => {
                         let _ = sender.send(LoungeEvent::ScreenDisconnected);
+                    }
+                    "onAdStateChange" => {
+                        if let Ok(ad_state) = serde_json::from_value::<AdState>(payload.clone()) {
+                            let _ = sender.send(LoungeEvent::AdStateChange(ad_state));
+                        }
                     }
                     _ => {
                         // Unknown event - avoid allocation for common events

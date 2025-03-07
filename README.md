@@ -71,6 +71,10 @@ while let Some(event) = rx.recv().await {
             println!("Screen disconnected");
             break;
         },
+        LoungeEvent::AdStateChange(ad_state) => {
+            println!("Ad playing. Content video: {}", ad_state.content_video_id);
+            println!("Skip enabled: {}", ad_state.is_skip_enabled);
+        },
         // Handle other events...
         _ => {}
     }
@@ -199,6 +203,7 @@ Events received from the YouTube Lounge API:
 - `LoungeStatus(Vec<Device>)`
 - `ScreenDisconnected`
 - `SessionEstablished`
+- `AdStateChange(AdState)`
 - `Unknown(String)`
 
 ## License
