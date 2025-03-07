@@ -220,7 +220,7 @@ impl LoungeClient {
 
     // Check screen availability
     pub async fn check_screen_availability(&self) -> Result<bool, LoungeError> {
-        let params = [("lounge_token", self.lounge_token.clone())];
+        let params = [("lounge_token", &self.lounge_token)]; // Use reference instead of clone
 
         let response = self
             .client
@@ -443,32 +443,33 @@ impl LoungeClient {
                     break;
                 }
 
-                let mut params = vec![
-                    ("name".to_string(), device_name.clone()),
-                    ("loungeIdToken".to_string(), lounge_token.clone()),
-                    ("SID".to_string(), sid.unwrap()),
-                    ("gsessionid".to_string(), gsessionid.unwrap()),
-                    ("device".to_string(), "REMOTE_CONTROL".to_string()),
-                    ("app".to_string(), "youtube-desktop".to_string()),
-                    ("VER".to_string(), "8".to_string()),
-                    ("v".to_string(), "2".to_string()),
-                    ("RID".to_string(), "rpc".to_string()),
-                    ("CI".to_string(), "0".to_string()),
-                    ("TYPE".to_string(), "xmlhttp".to_string()),
-                ];
+                // Avoid unnecessary cloning by using static strings where possible
+                // and reusing the unwrapped values
+                let sid_value = sid.unwrap();
+                let gsession_value = gsessionid.unwrap();
+
+                let mut params = HashMap::new();
+                params.insert("name", device_name.as_str());
+                params.insert("loungeIdToken", lounge_token.as_str());
+                params.insert("SID", sid_value.as_str());
+                params.insert("gsessionid", gsession_value.as_str());
+                params.insert("device", "REMOTE_CONTROL");
+                params.insert("app", "youtube-desktop");
+                params.insert("VER", "8");
+                params.insert("v", "2");
+                params.insert("RID", "rpc");
+                params.insert("CI", "0");
+                params.insert("TYPE", "xmlhttp");
 
                 // Add AID if we have one
-                if let Some(aid_value) = aid {
-                    params.push(("AID".to_string(), aid_value));
+                if let Some(ref aid_value) = aid {
+                    params.insert("AID", aid_value);
                 }
-
-                // Create parameter map
-                let param_map: HashMap<_, _> = params.into_iter().collect();
 
                 // Make the request using LONG_POLL_CLIENT for long polling connections
                 let response = match LONG_POLL_CLIENT
                     .get("https://www.youtube.com/api/lounge/bc/bind")
-                    .query(&param_map)
+                    .query(&params)
                     .send()
                     .await
                 {
@@ -569,16 +570,23 @@ impl LoungeClient {
             return Err(LoungeError::SessionExpired);
         }
 
-        // Build the params
+        // Build the params - getting unwrapped values
+        let sid_value = sid.as_ref().unwrap();
+        let gsession_value = gsessionid.as_ref().unwrap();
+        let rid_str = rid.to_string();
+        let command_name = get_command_name(&command);
+
+        // Using references where possible to avoid unnecessary clones
+        // Making sure all values are of the same type (&str)
         let params = [
-            ("name", self.device_name.clone()),
-            ("loungeIdToken", self.lounge_token.clone()),
-            ("SID", sid.unwrap()),
-            ("gsessionid", gsessionid.unwrap()),
-            ("VER", "8".to_string()),
-            ("v", "2".to_string()),
-            ("RID", rid.to_string()),
-            ("req0__sc", get_command_name(&command)),
+            ("name", self.device_name.as_str()),
+            ("loungeIdToken", self.lounge_token.as_str()),
+            ("SID", sid_value.as_str()),
+            ("gsessionid", gsession_value.as_str()),
+            ("VER", "8"),
+            ("v", "2"),
+            ("RID", rid_str.as_str()),
+            ("req0__sc", command_name.as_str()),
         ];
 
         // Build the form data
