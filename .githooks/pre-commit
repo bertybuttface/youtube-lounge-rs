@@ -1,0 +1,80 @@
+#!/bin/sh
+
+# Redirect output to stderr
+exec 1>&2
+
+# Format code before committing
+echo "Running cargo fmt..."
+cargo fmt -- --check
+FMT_EXIT_CODE=$?
+if [ $FMT_EXIT_CODE -ne 0 ]; then
+    echo "❌ Code formatting check failed."
+    echo
+    echo "To fix formatting issues, run:"
+    echo "  cargo fmt"
+    echo
+    echo "If you have uncommitted changes that prevent auto-formatting, run:"
+    echo "  cargo fmt -- --check # to see the issues"
+    echo "  cargo fmt -- <path/to/file.rs> # to format specific files"
+    exit 1
+fi
+
+# Run clippy to catch common mistakes (lib code)
+echo "Running cargo clippy for lib code..."
+cargo clippy -- -D warnings -A clippy::await_holding_lock
+CLIPPY_LIB_EXIT_CODE=$?
+if [ $CLIPPY_LIB_EXIT_CODE -ne 0 ]; then
+    echo "❌ Clippy found issues in lib code."
+    echo
+    echo "To fix Clippy issues in lib code, run:"
+    echo "  cargo clippy --fix -- -A clippy::await_holding_lock # to auto-fix where possible"
+    echo
+    echo "If you have uncommitted changes that prevent auto-fixing, run:"
+    echo "  cargo clippy --fix --allow-dirty --allow-staged -- -A clippy::await_holding_lock"
+    echo "  # or fix issues manually"
+    exit 1
+fi
+
+# Run clippy to catch common mistakes (test code)
+echo "Running cargo clippy for test code..."
+cargo clippy --tests -- -D warnings -A clippy::await_holding_lock
+CLIPPY_TEST_EXIT_CODE=$?
+if [ $CLIPPY_TEST_EXIT_CODE -ne 0 ]; then
+    echo "❌ Clippy found issues in test code."
+    echo
+    echo "To fix Clippy issues in test code, run:"
+    echo "  cargo clippy --fix --tests -- -A clippy::await_holding_lock # to auto-fix where possible"
+    echo
+    echo "If you have uncommitted changes that prevent auto-fixing, run:"
+    echo "  cargo clippy --fix --tests --allow-dirty --allow-staged -- -A clippy::await_holding_lock"
+    echo "  # or fix issues manually"
+    exit 1
+fi
+
+# Check for markdownlint-cli
+if command -v markdownlint >/dev/null 2>&1; then
+    echo "Running Markdown linting..."
+    markdownlint --config .markdownlint.json "*.md" ".github/**/*.md"
+    MARKDOWN_EXIT_CODE=$?
+    if [ $MARKDOWN_EXIT_CODE -ne 0 ]; then
+        echo "❌ Markdown linting failed."
+        echo
+        echo "To see Markdown issues in detail, run:"
+        echo "  markdownlint --config .markdownlint.json \"*.md\" \".github/**/*.md\""
+        echo
+        echo "To automatically fix Markdown issues (where possible), run:"
+        echo "  markdownlint --config .markdownlint.json --fix \"*.md\" \".github/**/*.md\""
+        echo 
+        echo "Check .markdownlint.json for the rules being enforced."
+        exit 1
+    fi
+else
+    echo "ℹ️ markdownlint-cli not found, skipping Markdown linting"
+    echo "To enable Markdown linting, install with one of the following:"
+    echo "  npm install -g markdownlint-cli"
+    echo "  bun install -g markdownlint-cli"
+fi
+
+# If all checks pass, allow the commit to proceed
+echo "Pre-commit checks passed!"
+exit 0

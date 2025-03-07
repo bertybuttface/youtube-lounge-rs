@@ -1,0 +1,67 @@
+{
+  "categories": [
+    {
+      "title": "## 🚀 Features",
+      "labels": ["feature"]
+    },
+    {
+      "title": "## 🐛 Bug Fixes",
+      "labels": ["bug", "fix"]
+    },
+    {
+      "title": "## ⚡ Performance Improvements",
+      "labels": ["performance"]
+    },
+    {
+      "title": "## 📚 Documentation",
+      "labels": ["documentation"]
+    },
+    {
+      "title": "## 🔧 Maintenance",
+      "labels": ["maintenance", "refactor", "chore"]
+    }
+  ],
+  "template": "${{CHANGELOG}}\n\n## 📦 Commits\n\n${{COMMITS}}",
+  "pr_template": "- ${{TITLE}} (#${{NUMBER}})",
+  "empty_template": "No changes",
+  "label_extractor": [
+    {
+      "pattern": "^feat: ",
+      "target": "feature"
+    },
+    {
+      "pattern": "^fix: ",
+      "target": "bug"
+    },
+    {
+      "pattern": "^perf: ",
+      "target": "performance"
+    },
+    {
+      "pattern": "^docs: ",
+      "target": "documentation"
+    },
+    {
+      "pattern": "^chore: ",
+      "target": "chore"
+    },
+    {
+      "pattern": "^refactor: ",
+      "target": "refactor"
+    }
+  ],
+  "duplicate_filter": {
+    "pattern": "^(feat|fix|perf|docs|chore|refactor):\\s",
+    "on_property": "title",
+    "method": "match"
+  },
+  "transformers": [
+    {
+      "pattern": "^(feat|fix|perf|docs|chore|refactor)(\\([\\w-]+\\))?:\\s(.+)$",
+      "target": "- $3"
+    }
+  ],
+  "max_tags_to_fetch": 200,
+  "max_pull_requests": 100,
+  "max_back_track_time_days": 365
+}
