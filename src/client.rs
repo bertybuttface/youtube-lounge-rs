@@ -720,7 +720,7 @@ impl LoungeClient {
     }
 }
 
-// Process a chunk of bytes from the stream
+// Process a chunk of bytes from the stream more efficiently
 async fn process_bytes_chunk(
     chunk: &Bytes,
     buffer: &mut String,
@@ -730,32 +730,65 @@ async fn process_bytes_chunk(
     session_state: &Arc<Mutex<SessionState>>,
     sender: &broadcast::Sender<LoungeEvent>,
 ) {
-    let chunk_str = String::from_utf8_lossy(chunk);
+    // Only create UTF-8 string from portions we need to process
+    let chunk_slice = chunk.as_ref();
+    let mut i = 0;
 
-    for c in chunk_str.chars() {
+    while i < chunk_slice.len() {
         if *reading_size {
-            if c == '\n' {
-                *reading_size = false;
+            // Find the newline if we're reading the size
+            if let Some(newline_pos) = chunk_slice[i..].iter().position(|&b| b == b'\n') {
+                // Add any digits to the size buffer
+                let size_portion = &chunk_slice[i..i + newline_pos];
+                if !size_portion.is_empty() {
+                    // Only create a string for the size portion
+                    let size_str = String::from_utf8_lossy(size_portion);
+                    size_buffer.push_str(&size_str);
+                }
+
+                // Parse the size and prepare for content
                 *expected_size = size_buffer.parse::<usize>().unwrap_or(0);
                 size_buffer.clear();
-            } else if c.is_ascii_digit() {
-                size_buffer.push(c);
+                *reading_size = false;
+
+                // Move past the newline
+                i += newline_pos + 1;
+            } else {
+                // Size continues in the next chunk
+                let size_portion = &chunk_slice[i..];
+                let size_str = String::from_utf8_lossy(size_portion);
+                size_buffer.push_str(&size_str);
+                break;
             }
         } else {
-            buffer.push(c);
+            // Reading content - calculate how much more we need
+            let remaining = *expected_size - buffer.len();
+            let available = chunk_slice.len() - i;
+            let to_read = remaining.min(available);
 
+            if to_read > 0 {
+                // Append directly to the buffer
+                let content_slice = &chunk_slice[i..i + to_read];
+                buffer.push_str(&String::from_utf8_lossy(content_slice));
+                i += to_read;
+            }
+
+            // Check if we've completed a message
             if buffer.len() >= *expected_size {
                 // Process the complete chunk
                 process_event_chunk(buffer, session_state, sender).await;
 
                 buffer.clear();
                 *reading_size = true;
+            } else {
+                // Need more data from the next chunk
+                break;
             }
         }
     }
 }
 
-// Helper function to process event chunks
+// Helper function to process event chunks more efficiently
 async fn process_event_chunk(
     chunk: &str,
     session_state: &Arc<Mutex<SessionState>>,
@@ -765,75 +798,84 @@ async fn process_event_chunk(
         return;
     }
 
-    // Try to parse the chunk as JSON
-    if let Ok(data) = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(chunk) {
-        for event in data {
-            if event.len() < 2 {
+    // Using a reference to avoid cloning where possible
+    let json_result = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(chunk);
+
+    // Return early if JSON parsing fails
+    let data = match json_result {
+        Ok(data) => data,
+        Err(_) => return,
+    };
+
+    for event in &data {
+        if event.len() < 2 {
+            continue;
+        }
+
+        // Extract the event ID and update the AID
+        if let Some(event_id) = event.first().and_then(|id| id.as_i64()) {
+            // Update the session state with the event ID
+            let mut state = session_state.lock().unwrap();
+            state.aid = Some(event_id.to_string());
+            drop(state);
+        }
+
+        // Process the event data if it has the right structure
+        if let Some(event_array) = event.get(1).and_then(|v| v.as_array()) {
+            if event_array.len() < 2 {
                 continue;
             }
 
-            // Get the event ID and update the AID
-            if let Some(event_id) = event[0].as_i64() {
-                let mut state = session_state.lock().unwrap();
-                state.aid = Some(event_id.to_string());
-                drop(state);
-            }
+            if let Some(event_type) = event_array.first().and_then(|t| t.as_str()) {
+                // Get a reference to the payload
+                let payload = &event_array[1];
 
-            // Process the event data - fixed to check array structure properly
-            if let Some(event_array) = event.get(1).and_then(|v| v.as_array()) {
-                if event_array.len() < 2 {
-                    continue;
-                }
+                match event_type {
+                    "onStateChange" => {
+                        // Convert JSON value to PlaybackState directly
+                        if let Ok(state) = serde_json::from_value::<PlaybackState>(payload.clone())
+                        {
+                            let _ = sender.send(LoungeEvent::StateChange(state));
+                        }
+                    }
+                    "nowPlaying" => {
+                        if let Ok(now_playing) =
+                            serde_json::from_value::<NowPlaying>(payload.clone())
+                        {
+                            let _ = sender.send(LoungeEvent::NowPlaying(now_playing));
+                        }
+                    }
+                    "loungeStatus" => {
+                        if let Ok(status) = serde_json::from_value::<LoungeStatus>(payload.clone())
+                        {
+                            // Parse nested JSON - try to avoid unnecessary string conversions
+                            let devices_result =
+                                serde_json::from_str::<Vec<Device>>(&status.devices);
 
-                if let Some(event_type) = event_array[0].as_str() {
-                    match event_type {
-                        "onStateChange" => {
-                            if let Ok(state) =
-                                serde_json::from_value::<PlaybackState>(event_array[1].clone())
-                            {
-                                let _ = sender.send(LoungeEvent::StateChange(state));
+                            if let Ok(devices) = devices_result {
+                                // Process device info efficiently
+                                let devices_with_info: Vec<Device> = devices
+                                    .into_iter()
+                                    .map(|mut device| {
+                                        if let Ok(info) = serde_json::from_str::<DeviceInfo>(
+                                            &device.device_info_raw,
+                                        ) {
+                                            device.device_info = Some(info);
+                                        }
+                                        device
+                                    })
+                                    .collect();
+
+                                let _ = sender.send(LoungeEvent::LoungeStatus(devices_with_info));
                             }
                         }
-                        "nowPlaying" => {
-                            if let Ok(now_playing) =
-                                serde_json::from_value::<NowPlaying>(event_array[1].clone())
-                            {
-                                let _ = sender.send(LoungeEvent::NowPlaying(now_playing));
-                            }
-                        }
-                        "loungeStatus" => {
-                            if let Ok(status) =
-                                serde_json::from_value::<LoungeStatus>(event_array[1].clone())
-                            {
-                                // Parse the nested JSON
-                                if let Ok(devices) =
-                                    serde_json::from_str::<Vec<Device>>(&status.devices)
-                                {
-                                    // Parse the deviceInfo JSON for each device
-                                    let devices_with_info = devices
-                                        .into_iter()
-                                        .map(|mut device| {
-                                            if let Ok(info) = serde_json::from_str::<DeviceInfo>(
-                                                &device.device_info_raw,
-                                            ) {
-                                                device.device_info = Some(info);
-                                            }
-                                            device
-                                        })
-                                        .collect();
-
-                                    let _ =
-                                        sender.send(LoungeEvent::LoungeStatus(devices_with_info));
-                                }
-                            }
-                        }
-                        "loungeScreenDisconnected" => {
-                            let _ = sender.send(LoungeEvent::ScreenDisconnected);
-                        }
-                        _ => {
-                            // Unknown event
-                            let _ = sender.send(LoungeEvent::Unknown(event_type.to_string()));
-                        }
+                    }
+                    "loungeScreenDisconnected" => {
+                        let _ = sender.send(LoungeEvent::ScreenDisconnected);
+                    }
+                    _ => {
+                        // Unknown event - avoid allocation for common events
+                        let _ = sender.send(LoungeEvent::Unknown(event_type.to_string()));
                     }
                 }
             }
