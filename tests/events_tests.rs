@@ -1,4 +1,6 @@
-use youtube_lounge_rs::models::{AdState, AutoplayModeChanged, SubtitlesTrackChanged, VideoData};
+use youtube_lounge_rs::models::{
+    AdState, AutoplayModeChanged, HasPreviousNextChanged, SubtitlesTrackChanged, VideoData,
+};
 use youtube_lounge_rs::{Device, LoungeEvent, NowPlaying, PlaybackState};
 
 // Test that we can create different LoungeEvent types
@@ -87,6 +89,14 @@ fn test_lounge_event_variants() {
     };
 
     let _event = LoungeEvent::AutoplayModeChanged(autoplay_mode);
+
+    // Test HasPreviousNextChanged
+    let has_prev_next = HasPreviousNextChanged {
+        has_next: "true".to_string(),
+        has_previous: "false".to_string(),
+    };
+
+    let _event = LoungeEvent::HasPreviousNextChanged(has_prev_next);
 }
 
 // Test LoungeEvent patterns
@@ -134,6 +144,10 @@ fn test_lounge_event_matching() {
         LoungeEvent::AutoplayModeChanged(AutoplayModeChanged {
             autoplay_mode: "".to_string(),
         }),
+        LoungeEvent::HasPreviousNextChanged(HasPreviousNextChanged {
+            has_next: "".to_string(),
+            has_previous: "".to_string(),
+        }),
     ];
 
     // Just test that we can match on each type
@@ -148,6 +162,7 @@ fn test_lounge_event_matching() {
             LoungeEvent::AdStateChange(_) => {}
             LoungeEvent::SubtitlesTrackChanged(_) => {}
             LoungeEvent::AutoplayModeChanged(_) => {}
+            LoungeEvent::HasPreviousNextChanged(_) => {}
         }
     }
 }
