@@ -170,3 +170,10 @@ pub struct AdState {
     #[serde(rename = "isSkipEnabled")]
     pub is_skip_enabled: bool,
 }
+
+// Subtitles track changed event
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubtitlesTrackChanged {
+    #[serde(rename = "videoId")]
+    pub video_id: String,
+}

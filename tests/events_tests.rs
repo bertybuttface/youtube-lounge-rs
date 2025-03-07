@@ -1,4 +1,4 @@
-use youtube_lounge_rs::models::{AdState, VideoData};
+use youtube_lounge_rs::models::{AdState, SubtitlesTrackChanged, VideoData};
 use youtube_lounge_rs::{Device, LoungeEvent, NowPlaying, PlaybackState};
 
 // Test that we can create different LoungeEvent types
@@ -73,6 +73,13 @@ fn test_lounge_event_variants() {
     };
 
     let _event = LoungeEvent::AdStateChange(ad_state);
+
+    // Test SubtitlesTrackChanged
+    let subtitles_track = SubtitlesTrackChanged {
+        video_id: "dQw4w9WgXcQ".to_string(),
+    };
+
+    let _event = LoungeEvent::SubtitlesTrackChanged(subtitles_track);
 }
 
 // Test LoungeEvent patterns
@@ -114,6 +121,9 @@ fn test_lounge_event_matching() {
             content_video_id: "".to_string(),
             is_skip_enabled: false,
         }),
+        LoungeEvent::SubtitlesTrackChanged(SubtitlesTrackChanged {
+            video_id: "".to_string(),
+        }),
     ];
 
     // Just test that we can match on each type
@@ -126,6 +136,7 @@ fn test_lounge_event_matching() {
             LoungeEvent::ScreenDisconnected => {}
             LoungeEvent::Unknown(_) => {}
             LoungeEvent::AdStateChange(_) => {}
+            LoungeEvent::SubtitlesTrackChanged(_) => {}
         }
     }
 }

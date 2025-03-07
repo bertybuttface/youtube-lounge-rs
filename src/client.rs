@@ -35,7 +35,7 @@ use crate::error::LoungeError;
 use crate::events::LoungeEvent;
 use crate::models::{
     AdState, Device, DeviceInfo, LoungeStatus, NowPlaying, PlaybackState, Screen,
-    ScreenAvailabilityResponse, ScreenResponse, ScreensResponse,
+    ScreenAvailabilityResponse, ScreenResponse, ScreensResponse, SubtitlesTrackChanged,
 };
 
 // Session state
@@ -847,6 +847,13 @@ async fn process_event_chunk(
                     "onAdStateChange" => {
                         if let Ok(ad_state) = serde_json::from_value::<AdState>(payload.clone()) {
                             let _ = sender.send(LoungeEvent::AdStateChange(ad_state));
+                        }
+                    }
+                    "onSubtitlesTrackChanged" => {
+                        if let Ok(track) =
+                            serde_json::from_value::<SubtitlesTrackChanged>(payload.clone())
+                        {
+                            let _ = sender.send(LoungeEvent::SubtitlesTrackChanged(track));
                         }
                     }
                     _ => {

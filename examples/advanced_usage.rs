@@ -271,6 +271,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Content video ID: {}", ad_state.content_video_id);
                         println!("  Skip enabled: {}", ad_state.is_skip_enabled);
                     }
+                    LoungeEvent::SubtitlesTrackChanged(track) => {
+                        println!("Subtitles track changed:");
+                        println!("  Video ID: {}", track.video_id);
+                    }
                 },
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
