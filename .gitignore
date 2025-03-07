@@ -22,3 +22,6 @@ Cargo.lock
 
 # Authentication data
 youtube_auth.json
+
+# Logs
+/logs/
