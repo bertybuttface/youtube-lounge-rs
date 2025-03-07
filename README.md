@@ -78,6 +78,9 @@ while let Some(event) = rx.recv().await {
         LoungeEvent::SubtitlesTrackChanged(track) => {
             println!("Subtitles track changed for video: {}", track.video_id);
         },
+        LoungeEvent::AutoplayModeChanged(mode) => {
+            println!("Autoplay mode changed to: {}", mode.autoplay_mode);
+        },
         // Handle other events...
         _ => {}
     }
@@ -208,6 +211,7 @@ Events received from the YouTube Lounge API:
 - `SessionEstablished`
 - `AdStateChange(AdState)`
 - `SubtitlesTrackChanged(SubtitlesTrackChanged)`
+- `AutoplayModeChanged(AutoplayModeChanged)`
 - `Unknown(String)`
 
 ## License
