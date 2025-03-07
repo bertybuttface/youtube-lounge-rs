@@ -411,7 +411,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to set volume: {}", e),
     }
 
-    // Keeping the connection alive for a while
+    // Wait a bit between commands
+    sleep(Duration::from_secs(2)).await;
+
+    // Mute the volume
+    println!("Muting audio...");
+    match client
+        .send_command_with_refresh(PlaybackCommand::Mute)
+        .await
+    {
+        Ok(_) => println!("Audio muted"),
+        Err(e) => eprintln!("Failed to mute: {}", e),
+    }
+
+    sleep(Duration::from_secs(2)).await;
+
+    // Unmute the volume
+    println!("Unmuting audio...");
+    match client
+        .send_command_with_refresh(PlaybackCommand::Unmute)
+        .await
+    {
+        Ok(_) => println!("Audio unmuted"),
+        Err(e) => eprintln!("Failed to unmute: {}", e),
+    }
+
+    // Keeping the connection alive for a while - wait a bit longer
+    // to see if we can observe the volume changed events
     println!("Keeping connection alive for 10 seconds...");
     sleep(Duration::from_secs(10)).await;
 

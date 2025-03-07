@@ -10,6 +10,8 @@ pub enum PlaybackCommand {
     SeekTo { new_time: f64 },
     SetAutoplayMode { autoplay_mode: String },
     SetVolume { volume: i32 },
+    Mute,
+    Unmute,
 }
 
 // Helper function to get the command name for a PlaybackCommand
@@ -24,5 +26,7 @@ pub fn get_command_name(command: &PlaybackCommand) -> String {
         PlaybackCommand::SeekTo { .. } => "seekTo".to_string(),
         PlaybackCommand::SetAutoplayMode { .. } => "setAutoplayMode".to_string(),
         PlaybackCommand::SetVolume { .. } => "setVolume".to_string(),
+        PlaybackCommand::Mute => "mute".to_string(),
+        PlaybackCommand::Unmute => "unMute".to_string(),
     }
 }
