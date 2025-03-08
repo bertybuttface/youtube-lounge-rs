@@ -239,105 +239,110 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_handle = tokio::spawn(async move {
         loop {
             match rx.recv().await {
-                Ok(event) => match event {
-                    LoungeEvent::SessionEstablished => {
-                        println!("Session established");
-                    }
-                    LoungeEvent::StateChange(state) => {
-                        println!("Playback state changed:");
-                        println!(
-                            "  Video: {} - {}",
-                            state.video_data.title, state.video_data.author
-                        );
-                        println!(
-                            "  Position: {:.2}/{:.2}",
-                            state.current_time, state.duration
-                        );
-                        println!("  State: {}", state.state_name());
-                    }
-                    LoungeEvent::NowPlaying(now_playing) => {
-                        println!("Now playing:");
-                        println!(
-                            "  Video: {} - {}",
-                            now_playing.video_data.title, now_playing.video_data.author
-                        );
-                        println!("  Video ID: {}", now_playing.video_id);
-                        if let Some(list_id) = now_playing.list_id {
-                            println!("  Playlist: {}", list_id);
+                Ok(event) => {
+                    match event {
+                        LoungeEvent::SessionEstablished => {
+                            println!("Session established");
                         }
-                    }
-                    LoungeEvent::LoungeStatus(devices, queue_id) => {
-                        println!("Lounge status update - Connected devices:");
-                        for device in devices {
-                            println!("  Device: {} ({})", device.name, device.device_type);
-                            if let Some(info) = device.device_info {
-                                println!(
-                                    "    Brand: {}, Model: {}, Type: {}",
-                                    info.brand, info.model, info.device_type
-                                );
+                        LoungeEvent::StateChange(state) => {
+                            println!("Playback state changed:");
+                            println!(
+                                "  Video: {} - {}",
+                                state.video_data.title, state.video_data.author
+                            );
+                            println!(
+                                "  Position: {:.2}/{:.2}",
+                                state.current_time, state.duration
+                            );
+                            println!("  State: {} ({})", state.state_name(), state.state);
+                            println!("  Volume: {} - Muted: {}", state.volume, state.muted);
+                            // Track source of state change events (important for debugging)
+                            println!("  NOTE: Check if this event was triggered by a YouTube client action");
+                        }
+                        LoungeEvent::NowPlaying(now_playing) => {
+                            println!("Now playing:");
+                            println!(
+                                "  Video: {} - {}",
+                                now_playing.video_data.title, now_playing.video_data.author
+                            );
+                            println!("  Video ID: {}", now_playing.video_id);
+                            if let Some(list_id) = now_playing.list_id {
+                                println!("  Playlist: {}", list_id);
                             }
                         }
+                        LoungeEvent::LoungeStatus(devices, queue_id) => {
+                            println!("Lounge status update - Connected devices:");
+                            for device in devices {
+                                println!("  Device: {} ({})", device.name, device.device_type);
+                                if let Some(info) = device.device_info {
+                                    println!(
+                                        "    Brand: {}, Model: {}, Type: {}",
+                                        info.brand, info.model, info.device_type
+                                    );
+                                }
+                            }
 
-                        // Display the queue ID if available
-                        if let Some(id) = queue_id {
-                            println!("  Queue ID: {}", id);
+                            // Display the queue ID if available
+                            if let Some(id) = queue_id {
+                                println!("  Queue ID: {}", id);
+                            }
+                        }
+                        LoungeEvent::ScreenDisconnected => {
+                            println!("Screen disconnected");
+                            break;
+                        }
+                        LoungeEvent::Unknown(event_info) => {
+                            println!("======= UNKNOWN EVENT =======");
+                            println!("{}", event_info);
+                            println!("=============================");
+                        }
+                        LoungeEvent::AdStateChange(ad_state) => {
+                            println!("Ad state change:");
+                            println!("  Content video ID: {}", ad_state.content_video_id);
+                            println!("  Skip enabled: {}", ad_state.is_skip_enabled);
+                        }
+                        LoungeEvent::SubtitlesTrackChanged(track) => {
+                            println!("Subtitles track changed:");
+                            println!("  Video ID: {}", track.video_id);
+                        }
+                        LoungeEvent::AutoplayModeChanged(mode) => {
+                            println!("Autoplay mode changed:");
+                            println!("  Mode: {}", mode.autoplay_mode);
+                        }
+                        LoungeEvent::HasPreviousNextChanged(nav) => {
+                            println!("Navigation state changed:");
+                            println!("  Has next: {}", nav.has_next);
+                            println!("  Has previous: {}", nav.has_previous);
+                        }
+                        LoungeEvent::VideoQualityChanged(quality) => {
+                            println!("Video quality changed:");
+                            println!("  Quality level: {}", quality.quality_level);
+                            println!("  Available levels: {}", quality.available_quality_levels);
+                            println!("  Video ID: {}", quality.video_id);
+                        }
+                        LoungeEvent::AudioTrackChanged(audio) => {
+                            println!("Audio track changed:");
+                            println!("  Audio track ID: {}", audio.audio_track_id);
+                            println!("  Video ID: {}", audio.video_id);
+                        }
+                        LoungeEvent::PlaylistModified(playlist) => {
+                            println!("Playlist modified:");
+                            println!("  Current index: {}", playlist.current_index);
+                            println!("  First video ID: {}", playlist.first_video_id);
+                            println!("  List ID: {}", playlist.list_id);
+                            println!("  Video ID: {}", playlist.video_id);
+                        }
+                        LoungeEvent::AutoplayUpNext(next) => {
+                            println!("Autoplay up next:");
+                            println!("  Video ID: {}", next.video_id);
+                        }
+                        LoungeEvent::VolumeChanged(volume) => {
+                            println!("Volume changed:");
+                            println!("  Volume level: {}", volume.volume_level());
+                            println!("  Muted: {}", volume.is_muted());
                         }
                     }
-                    LoungeEvent::ScreenDisconnected => {
-                        println!("Screen disconnected");
-                        break;
-                    }
-                    LoungeEvent::Unknown(event_info) => {
-                        println!("======= UNKNOWN EVENT =======");
-                        println!("{}", event_info);
-                        println!("=============================");
-                    }
-                    LoungeEvent::AdStateChange(ad_state) => {
-                        println!("Ad state change:");
-                        println!("  Content video ID: {}", ad_state.content_video_id);
-                        println!("  Skip enabled: {}", ad_state.is_skip_enabled);
-                    }
-                    LoungeEvent::SubtitlesTrackChanged(track) => {
-                        println!("Subtitles track changed:");
-                        println!("  Video ID: {}", track.video_id);
-                    }
-                    LoungeEvent::AutoplayModeChanged(mode) => {
-                        println!("Autoplay mode changed:");
-                        println!("  Mode: {}", mode.autoplay_mode);
-                    }
-                    LoungeEvent::HasPreviousNextChanged(nav) => {
-                        println!("Navigation state changed:");
-                        println!("  Has next: {}", nav.has_next);
-                        println!("  Has previous: {}", nav.has_previous);
-                    }
-                    LoungeEvent::VideoQualityChanged(quality) => {
-                        println!("Video quality changed:");
-                        println!("  Quality level: {}", quality.quality_level);
-                        println!("  Available levels: {}", quality.available_quality_levels);
-                        println!("  Video ID: {}", quality.video_id);
-                    }
-                    LoungeEvent::AudioTrackChanged(audio) => {
-                        println!("Audio track changed:");
-                        println!("  Audio track ID: {}", audio.audio_track_id);
-                        println!("  Video ID: {}", audio.video_id);
-                    }
-                    LoungeEvent::PlaylistModified(playlist) => {
-                        println!("Playlist modified:");
-                        println!("  Current index: {}", playlist.current_index);
-                        println!("  First video ID: {}", playlist.first_video_id);
-                        println!("  List ID: {}", playlist.list_id);
-                        println!("  Video ID: {}", playlist.video_id);
-                    }
-                    LoungeEvent::AutoplayUpNext(next) => {
-                        println!("Autoplay up next:");
-                        println!("  Video ID: {}", next.video_id);
-                    }
-                    LoungeEvent::VolumeChanged(volume) => {
-                        println!("Volume changed:");
-                        println!("  Volume level: {}", volume.volume_level());
-                        println!("  Muted: {}", volume.is_muted());
-                    }
-                },
+                }
                 Err(e) => match e {
                     tokio::sync::broadcast::error::RecvError::Closed => {
                         println!("Event channel closed");
@@ -442,9 +447,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Keeping the connection alive for a while - wait a bit longer
-    // to see if we can observe the volume changed events
-    println!("Keeping connection alive for 10 seconds...");
-    sleep(Duration::from_secs(10)).await;
+    // to see if we can observe events from YouTube client actions
+    println!("\nNow waiting for 60 seconds - please perform actions in the YouTube client");
+    println!("Try playing, pausing, seeking, etc. directly on your device");
+    println!("Watch for onStateChange events in the debug output\n");
+    sleep(Duration::from_secs(60)).await;
 
     // Disconnect from the screen
     println!("Disconnecting from screen...");
