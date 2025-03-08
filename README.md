@@ -211,6 +211,51 @@ The library provides the following main components:
 
 The main client for interacting with the YouTube Lounge API.
 
+#### PlaybackSession Management
+
+The library provides a `PlaybackSession` tracking system that maintains the state of videos being played on connected devices. Unlike regular events which are transient, sessions persist and provide a consolidated view of the current state:
+
+```rust
+// Get a receiver for session updates
+let mut session_rx = client.session_receiver();
+
+// Process session updates in a separate task
+tokio::spawn(async move {
+    while let Ok(session) = session_rx.recv().await {
+        println!("Device ID: {}", session.device_id.as_deref().unwrap_or("Unknown"));
+        println!("Video: {}", session.video_id.as_deref().unwrap_or("Unknown"));
+        println!("Progress: {:.2}/{:.2} ({:.1}%)", 
+            session.current_time, 
+            session.duration,
+            session.progress_percentage());
+        println!("State: {}", session.state_name());
+        
+        // Sessions track playback history when available
+        if let Some(history) = &session.video_history {
+            println!("Video history: {} videos", history.len());
+        }
+    }
+});
+
+// Query session information
+let all_sessions = client.get_all_sessions();
+if let Some(current) = client.get_current_session() {
+    println!("Currently playing: {}", current.video_id.unwrap_or_default());
+}
+
+// Find session for a specific device
+if let Some(session) = client.get_session_for_device("device_id") {
+    println!("Device is playing: {}", session.video_id.unwrap_or_default());
+}
+
+// Find a session by its CPN (Client Playback Nonce)
+if let Some(session) = client.get_session_by_cpn("some-cpn-value") {
+    println!("Found session for video: {}", session.video_id.unwrap_or_default());
+}
+```
+
+Sessions provide a more reliable way to track playback state and maintain continuity between events, especially useful for multi-device setups or applications that need to maintain playback history.
+
 #### Debug Mode
 
 You can enable debug mode to see the raw JSON payload of all events, which helps when inspecting for new or undocumented parameters:
