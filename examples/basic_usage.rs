@@ -21,6 +21,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "Rust YouTube Controller",
     );
 
+    // Enable debug mode to see all raw event data
+    client.enable_debug_mode();
+    println!("Debug mode enabled - will show raw JSON payloads for events");
+
     // Step 3: Subscribe to events before connecting
     let mut receiver = client.event_receiver();
 
@@ -58,6 +62,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                     LoungeEvent::StateChange(state) => {
                         println!("State changed: {}", state.state_name());
+                        println!(
+                            "  Video ID: {} - Duration: {:.1}s",
+                            state.video_id, state.duration
+                        );
+                        println!(
+                            "  Current time: {:.1}s - State: {}",
+                            state.current_time, state.state
+                        );
+                        println!("  Volume: {} - Muted: {}", state.volume, state.muted);
                     }
                     LoungeEvent::ScreenDisconnected => {
                         println!("Screen disconnected");
@@ -129,8 +142,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .send_command_with_refresh(PlaybackCommand::SetVolume { volume: 50 })
         .await?;
 
-    // Wait a bit more to observe the results
-    sleep(Duration::from_secs(5)).await;
+    // Wait a bit more to observe the results and see if we receive events
+    // from actions performed directly in the YouTube client
+    println!("\nNow waiting for 60 seconds - please perform actions in the YouTube client");
+    println!("Try playing, pausing, seeking, etc. directly on your device");
+    println!("Watch for onStateChange events in the debug output\n");
+    sleep(Duration::from_secs(60)).await;
 
     // Step 9: Disconnect from the screen when done
     println!("Disconnecting...");
