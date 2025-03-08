@@ -57,6 +57,7 @@ fn test_lounge_event_variants() {
         Device {
             app: "YouTube".to_string(),
             name: "Device 1".to_string(),
+            id: "device1".to_string(),
             device_type: "SMART_TV".to_string(),
             device_info_raw: "{}".to_string(),
             device_info: None,
@@ -64,6 +65,7 @@ fn test_lounge_event_variants() {
         Device {
             app: "YouTube".to_string(),
             name: "Device 2".to_string(),
+            id: "device2".to_string(),
             device_type: "SMART_TV".to_string(),
             device_info_raw: "{}".to_string(),
             device_info: None,

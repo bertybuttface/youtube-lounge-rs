@@ -91,7 +91,7 @@ pub struct LoungeClient {
     // New fields for session tracking
     active_sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
     session_sender: broadcast::Sender<PlaybackSession>,
-    list_id_to_devices: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    list_id_to_device: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl LoungeClient {
@@ -116,7 +116,7 @@ impl LoungeClient {
             token_refresh_callback: None,
             active_sessions: Arc::new(Mutex::new(HashMap::new())),
             session_sender: session_tx,
-            list_id_to_devices: Arc::new(Mutex::new(HashMap::new())),
+            list_id_to_device: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -178,17 +178,17 @@ impl LoungeClient {
 
     // Get session by device ID through list_id mapping
     pub fn get_session_for_device(&self, device_id: &str) -> Option<PlaybackSession> {
-        // Find list_id associated with this device
-        let list_id_to_devices = self.list_id_to_devices.lock().unwrap();
-        let found_list_id = list_id_to_devices.iter().find_map(|(list_id, devices)| {
-            if devices.contains(&device_id.to_string()) {
+        // Find list_id associated with this device (reverse lookup)
+        let list_id_to_device = self.list_id_to_device.lock().unwrap();
+        let found_list_id = list_id_to_device.iter().find_map(|(list_id, dev_id)| {
+            if dev_id == device_id {
                 Some(list_id.clone())
             } else {
                 None
             }
         });
 
-        drop(list_id_to_devices);
+        drop(list_id_to_device);
 
         if let Some(list_id) = found_list_id {
             // Find session with this list_id
@@ -463,7 +463,7 @@ impl LoungeClient {
         let connected = self.connected.clone();
         let active_sessions = self.active_sessions.clone();
         let session_sender = self.session_sender.clone();
-        let list_id_to_devices = self.list_id_to_devices.clone();
+        let list_id_to_device = self.list_id_to_device.clone();
 
         task::spawn(async move {
             loop {
@@ -582,7 +582,7 @@ impl LoungeClient {
                                 &event_sender,
                                 &active_sessions,
                                 &session_sender,
-                                &list_id_to_devices,
+                                &list_id_to_device,
                             )
                             .await;
                         }
@@ -779,7 +779,7 @@ struct SessionTracking<'a> {
     session_state: &'a Arc<Mutex<SessionState>>,
     active_sessions: &'a Arc<Mutex<HashMap<String, PlaybackSession>>>,
     session_sender: &'a broadcast::Sender<PlaybackSession>,
-    list_id_to_devices: &'a Arc<Mutex<HashMap<String, Vec<String>>>>,
+    list_id_to_device: &'a Arc<Mutex<HashMap<String, String>>>,
 }
 
 // Process a chunk of bytes from the stream more efficiently
@@ -794,7 +794,7 @@ async fn process_bytes_chunk(
     sender: &broadcast::Sender<LoungeEvent>,
     active_sessions: &Arc<Mutex<HashMap<String, PlaybackSession>>>,
     session_sender: &broadcast::Sender<PlaybackSession>,
-    list_id_to_devices: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+    list_id_to_device: &Arc<Mutex<HashMap<String, String>>>,
 ) {
     // Only create UTF-8 string from portions we need to process
     let chunk_slice = chunk.as_ref();
@@ -848,7 +848,7 @@ async fn process_bytes_chunk(
                     sender,
                     active_sessions,
                     session_sender,
-                    list_id_to_devices,
+                    list_id_to_device,
                 )
                 .await;
 
@@ -869,7 +869,7 @@ async fn process_event_chunk(
     sender: &broadcast::Sender<LoungeEvent>,
     active_sessions: &Arc<Mutex<HashMap<String, PlaybackSession>>>,
     session_sender: &broadcast::Sender<PlaybackSession>,
-    list_id_to_devices: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+    list_id_to_device: &Arc<Mutex<HashMap<String, String>>>,
 ) {
     // Check if debug mode is enabled
     let debug_mode = {
@@ -988,11 +988,39 @@ async fn process_event_chunk(
 
                                     // Update list_id to device mapping if available
                                     if let Some(list_id) = &now_playing.list_id {
-                                        // We'll update this mapping when processing loungeStatus events
-                                        // But store the relationship here
-                                        let mut list_map = list_id_to_devices.lock().unwrap();
-                                        if !list_map.contains_key(list_id) {
-                                            list_map.insert(list_id.clone(), Vec::new());
+                                        // Check if we already have device_id for this list_id
+                                        let mut device_id = None;
+                                        let list_map = list_id_to_device.lock().unwrap();
+                                        if debug_mode {
+                                            println!("DEBUG: Looking up device_id for list_id {} in NowPlaying event", list_id);
+                                            println!("DEBUG: Available mappings:");
+                                            for (list, dev) in list_map.iter() {
+                                                println!("  {} -> {}", list, dev);
+                                            }
+                                        }
+                                        if let Some(existing_device) = list_map.get(list_id) {
+                                            device_id = Some(existing_device.clone());
+                                            if debug_mode {
+                                                println!("DEBUG: Found existing device_id {} for list_id {} in NowPlaying event", 
+                                                         existing_device, list_id);
+                                            }
+                                        } else if debug_mode {
+                                            println!("DEBUG: No device_id found for list_id {} in NowPlaying event", list_id);
+                                        }
+                                        drop(list_map);
+
+                                        // If we have a device_id, update the session
+                                        if let Some(device_id) = device_id {
+                                            let mut sessions = active_sessions.lock().unwrap();
+                                            if let Some(session) = sessions.get_mut(cpn) {
+                                                if debug_mode {
+                                                    println!("DEBUG: Updating session for CPN {} with device_id {} in NowPlaying", 
+                                                             cpn, device_id);
+                                                }
+                                                session.device_id = Some(device_id);
+                                            } else if debug_mode {
+                                                println!("DEBUG: No session found for CPN {} in NowPlaying", cpn);
+                                            }
                                         }
                                     }
 
@@ -1008,11 +1036,40 @@ async fn process_event_chunk(
                     "loungeStatus" => {
                         if let Ok(status) = serde_json::from_value::<LoungeStatus>(payload.clone())
                         {
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: LoungeStatus received: queue_id={:?}",
+                                    status.queue_id
+                                );
+                            }
+
+                            if debug_mode {
+                                println!(
+                                    "DEBUG: Parsing devices from LoungeStatus: {}",
+                                    status.devices
+                                );
+                            }
+
                             // Parse nested JSON - try to avoid unnecessary string conversions
                             let devices_result =
                                 serde_json::from_str::<Vec<Device>>(&status.devices);
 
+                            if debug_mode {
+                                match &devices_result {
+                                    Ok(_) => println!("DEBUG: Successfully parsed devices JSON"),
+                                    Err(e) => {
+                                        println!("DEBUG: Failed to parse devices JSON: {}", e)
+                                    }
+                                }
+                            }
+
                             if let Ok(devices) = devices_result {
+                                if debug_mode {
+                                    println!(
+                                        "DEBUG: Successfully parsed {} devices",
+                                        devices.len()
+                                    );
+                                }
                                 // Process device info efficiently
                                 let devices_with_info: Vec<Device> = devices
                                     .into_iter()
@@ -1028,12 +1085,85 @@ async fn process_event_chunk(
 
                                 // Update list_id to device mappings if queue_id is available
                                 if let Some(queue_id) = &status.queue_id {
-                                    let device_ids: Vec<String> =
-                                        devices_with_info.iter().map(|d| d.name.clone()).collect();
+                                    if debug_mode {
+                                        println!("DEBUG: Processing LoungeStatus with queue_id {} and {} devices", 
+                                                queue_id, devices_with_info.len());
 
-                                    // Update the mapping
-                                    let mut list_map = list_id_to_devices.lock().unwrap();
-                                    list_map.insert(queue_id.clone(), device_ids);
+                                        // Debug print all devices
+                                        for (idx, device) in devices_with_info.iter().enumerate() {
+                                            println!(
+                                                "DEBUG: Device {}: id={}, name={}, type={}",
+                                                idx, device.id, device.name, device.device_type
+                                            );
+                                        }
+                                    }
+
+                                    // Find our REMOTE_CONTROL device
+                                    let remote_device = devices_with_info
+                                        .iter()
+                                        .find(|d| d.device_type == "REMOTE_CONTROL");
+                                    if debug_mode {
+                                        if remote_device.is_some() {
+                                            println!("DEBUG: Found REMOTE_CONTROL device");
+                                        } else {
+                                            println!("DEBUG: No REMOTE_CONTROL device found");
+                                        }
+                                    }
+                                    if let Some(remote_device) = remote_device {
+                                        let device_id = remote_device.id.clone();
+
+                                        if debug_mode {
+                                            println!(
+                                                "DEBUG: Using device_id {} for queue_id {}",
+                                                device_id, queue_id
+                                            );
+                                        }
+
+                                        // Update the 1:1 mapping
+                                        let mut list_map = list_id_to_device.lock().unwrap();
+                                        list_map.insert(queue_id.clone(), device_id.clone());
+                                        if debug_mode {
+                                            println!(
+                                                "DEBUG: Added mapping: list_id {} -> device_id {}",
+                                                queue_id, device_id
+                                            );
+                                            println!("DEBUG: Current mappings:");
+                                            for (list, dev) in list_map.iter() {
+                                                println!("  {} -> {}", list, dev);
+                                            }
+                                        }
+                                        drop(list_map);
+
+                                        // Update device_id field for any sessions with matching list_id
+                                        let mut sessions = active_sessions.lock().unwrap();
+                                        let mut updated_sessions = Vec::new();
+
+                                        for session in sessions.values_mut() {
+                                            if session.list_id.as_deref() == Some(queue_id) {
+                                                if debug_mode {
+                                                    println!("DEBUG: Updating session for CPN {} with device_id {}", 
+                                                             session.cpn, device_id);
+                                                }
+
+                                                if session.device_id != Some(device_id.clone()) {
+                                                    session.device_id = Some(device_id.clone());
+                                                    updated_sessions.push(session.clone());
+                                                }
+                                            }
+                                        }
+
+                                        drop(sessions);
+
+                                        // Send updates for any modified sessions
+                                        for session in updated_sessions {
+                                            let _ = session_sender.send(session);
+                                        }
+                                    } else if devices_with_info.is_empty() {
+                                        eprintln!("Warning: Received LoungeStatus with queue_id but no devices");
+                                    } else {
+                                        eprintln!("Warning: Received LoungeStatus with multiple devices for a single queue_id ({} devices)", 
+                                                 devices_with_info.len());
+                                    }
                                 }
 
                                 // Send the event
