@@ -507,12 +507,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Keeping the connection alive for a while - wait a bit longer
     // to see if we can observe events from YouTube client actions
-    println!("\nNow waiting for 30 seconds - please perform actions in the YouTube client");
+    println!("\nNow waiting for 20 seconds - please perform actions in the YouTube client");
     println!("Try playing, pausing, seeking, etc. directly on your device");
     println!("Watch for event updates and PlaybackSession updates in the output\n");
 
     // Add a demonstration of session query capabilities
-    sleep(Duration::from_secs(15)).await;
+    sleep(Duration::from_secs(10)).await;
 
     println!("\n=== Session Query Demonstration ===");
     // Get all active sessions
@@ -535,7 +535,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    sleep(Duration::from_secs(15)).await;
+    sleep(Duration::from_secs(10)).await;
 
     // Disconnect from the screen
     println!("Disconnecting from screen...");
