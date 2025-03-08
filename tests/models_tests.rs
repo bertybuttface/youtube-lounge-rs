@@ -135,6 +135,7 @@ fn test_device_model() {
     let json_data = json!({
         "app": "YouTube",
         "name": "Living Room TV",
+        "id": "device123",
         "type": "SMART_TV",
         "deviceInfo": device_info_json
     });
@@ -143,6 +144,7 @@ fn test_device_model() {
 
     assert_eq!(device.app, "YouTube");
     assert_eq!(device.name, "Living Room TV");
+    assert_eq!(device.id, "device123");
     assert_eq!(device.device_type, "SMART_TV");
     assert_eq!(device.device_info_raw, device_info_json);
 
