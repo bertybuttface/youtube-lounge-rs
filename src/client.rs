@@ -53,8 +53,8 @@ struct SessionState {
 }
 
 impl SessionState {
-    fn new() -> Self {
-        SessionState {
+    const fn new() -> Self {
+        Self {
             sid: None,
             gsessionid: None,
             aid: None,
@@ -105,7 +105,7 @@ impl LoungeClient {
         // Create a broadcast channel for playback sessions with capacity for 100 sessions
         let (session_tx, _session_rx) = broadcast::channel(100);
 
-        LoungeClient {
+        Self {
             client,
             screen_id: screen_id.to_string(),
             lounge_token: lounge_token.to_string(),
@@ -147,7 +147,7 @@ impl LoungeClient {
         let screen = Self::refresh_lounge_token(&self.screen_id).await?;
 
         // Update the client's token
-        self.lounge_token = screen.lounge_token.clone();
+        self.lounge_token.clone_from(&screen.lounge_token);
 
         // Call the callback if it exists
         if let Some(callback) = &self.token_refresh_callback {
@@ -333,13 +333,15 @@ impl LoungeClient {
 
     // Connect to the screen and establish a session
     pub async fn connect(&self) -> Result<(), LoungeError> {
-        let mut session_state = self.session_state.lock().unwrap();
-        session_state.rid = 1;
-        session_state.command_offset = 0;
-        session_state.sid = None;
-        session_state.gsessionid = None;
-        session_state.aid = None;
-        drop(session_state);
+        // Reset session state before making any async calls
+        {
+            let mut session_state = self.session_state.lock().unwrap();
+            session_state.rid = 1;
+            session_state.command_offset = 0;
+            session_state.sid = None;
+            session_state.gsessionid = None;
+            session_state.aid = None;
+        } // Lock is released here
 
         let params = [
             ("RID", "1"),
@@ -431,19 +433,24 @@ impl LoungeClient {
             }
         }
 
-        let mut state = self.session_state.lock().unwrap();
-        state.sid = sid.clone();
-        state.gsessionid = gsessionid.clone();
-        drop(state);
-
         if sid.is_none() || gsessionid.is_none() {
             return Err(LoungeError::InvalidResponse(
                 "Failed to obtain session IDs".to_string(),
             ));
         }
 
+        // Update session state with the IDs we obtained
+        {
+            let mut state = self.session_state.lock().unwrap();
+            state.sid = sid.clone();
+            state.gsessionid = gsessionid.clone();
+        } // Lock is released here
+
         // Set connected flag
-        *self.connected.lock().unwrap() = true;
+        {
+            let mut connected = self.connected.lock().unwrap();
+            *connected = true;
+        } // Lock is released here
 
         // Send session established event
         let _ = self.event_sender.send(LoungeEvent::SessionEstablished);
@@ -583,8 +590,7 @@ impl LoungeClient {
                                 &active_sessions,
                                 &session_sender,
                                 &list_id_to_device,
-                            )
-                            .await;
+                            );
                         }
                         Err(e) => {
                             eprintln!("Error in stream: {}", e);
@@ -608,16 +614,26 @@ impl LoungeClient {
     // Send a command to the screen
     pub async fn send_command(&self, command: PlaybackCommand) -> Result<(), LoungeError> {
         // Check if we're connected
-        if !*self.connected.lock().unwrap() {
-            return Err(LoungeError::ConnectionClosed);
-        }
+        {
+            let connected = self.connected.lock().unwrap();
+            if !*connected {
+                return Err(LoungeError::ConnectionClosed);
+            }
+        } // Lock is released here
 
-        let mut state = self.session_state.lock().unwrap();
-        let sid = state.sid.clone();
-        let gsessionid = state.gsessionid.clone();
-        let rid = state.increment_rid();
-        let ofs = state.increment_offset();
-        drop(state);
+        // Get the session state values we need before doing async operations
+        let sid;
+        let gsessionid;
+        let rid;
+        let ofs;
+
+        {
+            let mut state = self.session_state.lock().unwrap();
+            sid = state.sid.clone();
+            gsessionid = state.gsessionid.clone();
+            rid = state.increment_rid();
+            ofs = state.increment_offset();
+        } // Lock is released here
 
         if sid.is_none() || gsessionid.is_none() {
             return Err(LoungeError::SessionExpired);
@@ -675,15 +691,24 @@ impl LoungeClient {
         // Handle errors
         match response.status().as_u16() {
             400 => {
-                *self.connected.lock().unwrap() = false;
+                {
+                    let mut connected = self.connected.lock().unwrap();
+                    *connected = false;
+                } // Lock is released here
                 return Err(LoungeError::SessionExpired);
             }
             401 => {
-                *self.connected.lock().unwrap() = false;
+                {
+                    let mut connected = self.connected.lock().unwrap();
+                    *connected = false;
+                } // Lock is released here
                 return Err(LoungeError::TokenExpired);
             }
             410 => {
-                *self.connected.lock().unwrap() = false;
+                {
+                    let mut connected = self.connected.lock().unwrap();
+                    *connected = false;
+                } // Lock is released here
                 return Err(LoungeError::ConnectionClosed);
             }
             _ => {}
@@ -720,15 +745,27 @@ impl LoungeClient {
     // Disconnect from the screen
     pub async fn disconnect(&self) -> Result<(), LoungeError> {
         // Only try to disconnect if connected
-        if !*self.connected.lock().unwrap() {
+        let is_connected;
+        {
+            let connected = self.connected.lock().unwrap();
+            is_connected = *connected;
+        } // Lock is released here
+
+        if !is_connected {
             return Ok(());
         }
 
-        let mut state = self.session_state.lock().unwrap();
-        let sid = state.sid.clone();
-        let gsessionid = state.gsessionid.clone();
-        let rid = state.increment_rid();
-        drop(state);
+        // Get session state values before any async operations
+        let sid;
+        let gsessionid;
+        let rid;
+
+        {
+            let mut state = self.session_state.lock().unwrap();
+            sid = state.sid.clone();
+            gsessionid = state.gsessionid.clone();
+            rid = state.increment_rid();
+        } // Lock is released here
 
         if sid.is_none() || gsessionid.is_none() {
             return Ok(());
@@ -759,7 +796,10 @@ impl LoungeClient {
             .await;
 
         // Set connected to false
-        *self.connected.lock().unwrap() = false;
+        {
+            let mut connected = self.connected.lock().unwrap();
+            *connected = false;
+        } // Lock is released here
 
         Ok(())
     }
@@ -784,7 +824,7 @@ struct SessionTracking<'a> {
 
 // Process a chunk of bytes from the stream more efficiently
 #[allow(clippy::too_many_arguments)]
-async fn process_bytes_chunk(
+fn process_bytes_chunk(
     chunk: &Bytes,
     buffer: &mut String,
     size_buffer: &mut String,
@@ -849,8 +889,7 @@ async fn process_bytes_chunk(
                     active_sessions,
                     session_sender,
                     list_id_to_device,
-                )
-                .await;
+                );
 
                 buffer.clear();
                 *reading_size = true;
@@ -863,7 +902,7 @@ async fn process_bytes_chunk(
 }
 
 // Helper function to process event chunks more efficiently
-async fn process_event_chunk(
+fn process_event_chunk(
     chunk: &str,
     session_state: &Arc<Mutex<SessionState>>,
     sender: &broadcast::Sender<LoungeEvent>,
