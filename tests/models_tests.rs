@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use youtube_lounge_rs::{Device, DeviceInfo, NowPlaying, PlaybackState, Screen};
+use youtube_lounge_rs::{Device, DeviceInfo, HasVolume, NowPlaying, PlaybackState, Screen};
 
 // Test Screen model serialization/deserialization
 #[test]
