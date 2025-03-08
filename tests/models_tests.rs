@@ -24,14 +24,16 @@ fn test_screen_model() {
 fn test_playback_state_model() {
     // Test deserialization
     let json_data = json!({
-        "state": 1,
-        "currentTime": 42.5,
-        "duration": 180.0,
-        "seekableStartTime": 0.0,
-        "seekableEndTime": 180.0,
+        "state": "1",
+        "currentTime": "42.5",
+        "duration": "180.0",
+        "seekableStartTime": "0.0",
+        "seekableEndTime": "180.0",
         "videoId": "dQw4w9WgXcQ",
-        "volume": 50,
-        "muted": false,
+        "volume": "50",
+        "muted": "false",
+        "loadedTime": "60.0",
+        "cpn": "test_cpn",
         "videoData": {
             "video_id": "dQw4w9WgXcQ",
             "author": "Rick Astley",
@@ -42,18 +44,26 @@ fn test_playback_state_model() {
 
     let state: PlaybackState = serde_json::from_value(json_data).unwrap();
 
-    assert_eq!(state.state, 1);
-    assert_eq!(state.current_time, 42.5);
-    assert_eq!(state.duration, 180.0);
-    assert_eq!(state.seekable_start_time, 0.0);
-    assert_eq!(state.seekable_end_time, 180.0);
+    assert_eq!(state.state, "1");
+    assert_eq!(state.current_time, "42.5");
+    assert_eq!(state.duration, "180.0");
+    assert_eq!(state.seekable_start_time, "0.0");
+    assert_eq!(state.seekable_end_time, "180.0");
     assert_eq!(state.video_id, "dQw4w9WgXcQ");
-    assert_eq!(state.volume, 50);
-    assert!(!state.muted);
-    assert_eq!(state.video_data.video_id, "dQw4w9WgXcQ");
-    assert_eq!(state.video_data.author, "Rick Astley");
-    assert_eq!(state.video_data.title, "Never Gonna Give You Up");
-    assert!(state.video_data.is_playable);
+    assert_eq!(state.volume, "50");
+    assert_eq!(state.muted, "false");
+    assert_eq!(state.loaded_time, "60.0");
+    assert_eq!(state.cpn, Some("test_cpn".to_string()));
+
+    // Test the value parsing methods
+    assert_eq!(state.state_value(), 1);
+    assert_eq!(state.current_time_value(), 42.5);
+    assert_eq!(state.duration_value(), 180.0);
+    assert_eq!(state.seekable_start_time_value(), 0.0);
+    assert_eq!(state.seekable_end_time_value(), 180.0);
+    assert_eq!(state.volume_value(), 50);
+    assert!(!state.is_muted());
+    assert_eq!(state.loaded_time_value(), 60.0);
 }
 
 // Test NowPlaying model serialization/deserialization
@@ -62,9 +72,15 @@ fn test_now_playing_model() {
     // Test deserialization
     let json_data = json!({
         "videoId": "dQw4w9WgXcQ",
-        "currentTime": 42.5,
-        "state": 1,
+        "currentTime": "42.5",
+        "state": "1",
+        "duration": "180.0",
+        "loadedTime": "60.0",
+        "seekableStartTime": "0.0",
+        "seekableEndTime": "180.0",
         "listId": "PL12345",
+        "cpn": "test_cpn",
+        "mdxExpandedReceiverVideoIdList": "abc123,def456",
         "videoData": {
             "video_id": "dQw4w9WgXcQ",
             "author": "Rick Astley",
@@ -76,11 +92,33 @@ fn test_now_playing_model() {
     let now_playing: NowPlaying = serde_json::from_value(json_data).unwrap();
 
     assert_eq!(now_playing.video_id, "dQw4w9WgXcQ");
-    assert_eq!(now_playing.current_time, 42.5);
-    assert_eq!(now_playing.state, 1);
+    assert_eq!(now_playing.current_time, "42.5");
+    assert_eq!(now_playing.state, "1");
+    assert_eq!(now_playing.duration, "180.0");
+    assert_eq!(now_playing.loaded_time, "60.0");
+    assert_eq!(now_playing.seekable_start_time, "0.0");
+    assert_eq!(now_playing.seekable_end_time, "180.0");
     assert_eq!(now_playing.list_id, Some("PL12345".to_string()));
-    assert_eq!(now_playing.video_data.title, "Never Gonna Give You Up");
-    assert_eq!(now_playing.video_data.author, "Rick Astley");
+    assert_eq!(now_playing.cpn, Some("test_cpn".to_string()));
+    assert_eq!(
+        now_playing.mdx_expanded_receiver_video_id_list,
+        Some("abc123,def456".to_string())
+    );
+
+    // Test the value parsing methods
+    assert_eq!(now_playing.state_value(), 1);
+    assert_eq!(now_playing.current_time_value(), 42.5);
+    assert_eq!(now_playing.duration_value(), 180.0);
+    assert_eq!(now_playing.seekable_start_time_value(), 0.0);
+    assert_eq!(now_playing.seekable_end_time_value(), 180.0);
+    assert_eq!(now_playing.loaded_time_value(), 60.0);
+
+    // Test the video history parsing
+    let video_history = now_playing.video_history().unwrap();
+    assert_eq!(
+        video_history,
+        vec!["abc123".to_string(), "def456".to_string()]
+    );
 }
 
 // Test Device model serialization/deserialization

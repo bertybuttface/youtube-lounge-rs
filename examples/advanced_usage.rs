@@ -246,28 +246,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         LoungeEvent::StateChange(state) => {
                             println!("Playback state changed:");
-                            println!(
-                                "  Video: {} - {}",
-                                state.video_data.title, state.video_data.author
-                            );
+                            println!("  Video ID: {}", state.video_id);
                             println!(
                                 "  Position: {:.2}/{:.2}",
-                                state.current_time, state.duration
+                                state.current_time_value(),
+                                state.duration_value()
                             );
                             println!("  State: {} ({})", state.state_name(), state.state);
-                            println!("  Volume: {} - Muted: {}", state.volume, state.muted);
+                            println!(
+                                "  Volume: {} - Muted: {}",
+                                state.volume_value(),
+                                state.is_muted()
+                            );
+                            if let Some(cpn) = &state.cpn {
+                                println!("  CPN: {}", cpn);
+                            }
                             // Track source of state change events (important for debugging)
                             println!("  NOTE: Check if this event was triggered by a YouTube client action");
                         }
                         LoungeEvent::NowPlaying(now_playing) => {
                             println!("Now playing:");
-                            println!(
-                                "  Video: {} - {}",
-                                now_playing.video_data.title, now_playing.video_data.author
-                            );
                             println!("  Video ID: {}", now_playing.video_id);
-                            if let Some(list_id) = now_playing.list_id {
+                            println!("  Duration: {:.2}", now_playing.duration_value());
+                            println!("  Current time: {:.2}", now_playing.current_time_value());
+                            if let Some(list_id) = &now_playing.list_id {
                                 println!("  Playlist: {}", list_id);
+                            }
+                            if let Some(cpn) = &now_playing.cpn {
+                                println!("  CPN: {}", cpn);
+                            }
+                            if let Some(video_list) =
+                                &now_playing.mdx_expanded_receiver_video_id_list
+                            {
+                                println!("  Video history: {}", video_list);
                             }
                         }
                         LoungeEvent::LoungeStatus(devices, queue_id) => {
