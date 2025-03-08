@@ -262,6 +262,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  Playlist: {}", list_id);
                         }
 
+                        if let Some(device_id) = &session.device_id {
+                            println!("  Device ID: {}", device_id);
+                        }
+
                         if let Some(history) = &session.video_history {
                             println!("  Video history: {} videos", history.len());
                         }
@@ -504,12 +508,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Keeping the connection alive for a while - wait a bit longer
     // to see if we can observe events from YouTube client actions
-    println!("\nNow waiting for 60 seconds - please perform actions in the YouTube client");
+    println!("\nNow waiting for 30 seconds - please perform actions in the YouTube client");
     println!("Try playing, pausing, seeking, etc. directly on your device");
     println!("Watch for event updates and PlaybackSession updates in the output\n");
 
     // Add a demonstration of session query capabilities
-    sleep(Duration::from_secs(30)).await;
+    sleep(Duration::from_secs(15)).await;
 
     println!("\n=== Session Query Demonstration ===");
     // Get all active sessions
@@ -532,7 +536,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    sleep(Duration::from_secs(30)).await;
+    sleep(Duration::from_secs(15)).await;
 
     // Disconnect from the screen
     println!("Disconnecting from screen...");
@@ -557,6 +561,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             current_session.current_time, current_session.duration
         );
         println!("  State: {}", current_session.state_name());
+
+        if let Some(device_id) = &current_session.device_id {
+            println!("  Device ID: {}", device_id);
+        }
     } else {
         println!("  No active session");
     }

@@ -15,6 +15,7 @@ pub struct PlaybackSession {
     pub seekable_end_time: f64,
     pub last_updated: Instant,
     pub video_history: Option<Vec<String>>,
+    pub device_id: Option<String>,
 }
 
 impl PlaybackSession {
@@ -42,6 +43,7 @@ impl PlaybackSession {
             seekable_end_time: event.seekable_end_time_value(),
             last_updated: Instant::now(),
             video_history: event.video_history(),
+            device_id: None, // Will be populated later when we have device mapping
         })
     }
 
@@ -113,6 +115,7 @@ impl PlaybackSession {
             seekable_end_time: event.seekable_end_time_value(),
             last_updated: Instant::now(),
             video_history: None,
+            device_id: None, // Will be populated later when we have device mapping
         })
     }
 
@@ -423,9 +426,10 @@ pub struct DeviceInfo {
 pub struct Device {
     pub app: String,
     pub name: String,
+    pub id: String, // This is the device ID
     #[serde(rename = "type")]
     pub device_type: String,
-    #[serde(rename = "deviceInfo")]
+    #[serde(rename = "deviceInfo", default)]
     pub device_info_raw: String,
     #[serde(skip)]
     pub device_info: Option<DeviceInfo>,
