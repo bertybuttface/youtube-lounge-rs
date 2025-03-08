@@ -5,7 +5,6 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use tokio::time::{sleep, Duration};
-use youtube_lounge_rs::models::PlaybackSession;
 use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand, Screen};
 
 // Structure to store authentication data for multiple screens
