@@ -39,6 +39,7 @@ use crate::models::{
     PlaylistModified, Screen, ScreenAvailabilityResponse, ScreenResponse, ScreensResponse,
     SubtitlesTrackChanged, VideoData, VideoQualityChanged, VolumeChanged,
 };
+use crate::session::PlaybackSessionManager;
 
 // Session state
 #[derive(Debug, Clone)]
@@ -88,10 +89,8 @@ pub struct LoungeClient {
     event_sender: broadcast::Sender<LoungeEvent>,
     connected: Arc<Mutex<bool>>,
     token_refresh_callback: Option<TokenRefreshCallback>,
-    // New fields for session tracking
-    active_sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
-    session_sender: broadcast::Sender<PlaybackSession>,
-    list_id_to_device: Arc<Mutex<HashMap<String, String>>>,
+    // Session manager handles all session tracking
+    session_manager: PlaybackSessionManager,
 }
 
 impl LoungeClient {
@@ -102,8 +101,8 @@ impl LoungeClient {
         // Create a broadcast channel with capacity for 100 events
         let (event_tx, _event_rx) = broadcast::channel(100);
 
-        // Create a broadcast channel for playback sessions with capacity for 100 sessions
-        let (session_tx, _session_rx) = broadcast::channel(100);
+        // Create a new session manager
+        let session_manager = PlaybackSessionManager::new();
 
         Self {
             client,
@@ -114,9 +113,7 @@ impl LoungeClient {
             event_sender: event_tx,
             connected: Arc::new(Mutex::new(false)),
             token_refresh_callback: None,
-            active_sessions: Arc::new(Mutex::new(HashMap::new())),
-            session_sender: session_tx,
-            list_id_to_device: Arc::new(Mutex::new(HashMap::new())),
+            session_manager,
         }
     }
 
@@ -133,12 +130,14 @@ impl LoungeClient {
     pub fn enable_debug_mode(&mut self) {
         let mut state = self.session_state.lock().unwrap();
         state.debug_mode = true;
+        self.session_manager.enable_debug_mode();
     }
 
     /// Disable debug mode
     pub fn disable_debug_mode(&mut self) {
         let mut state = self.session_state.lock().unwrap();
         state.debug_mode = false;
+        self.session_manager.disable_debug_mode();
     }
 
     /// Internal method to refresh the token
@@ -167,51 +166,32 @@ impl LoungeClient {
 
     // Get the session receiver for listening to playback session updates
     pub fn session_receiver(&self) -> broadcast::Receiver<PlaybackSession> {
-        self.session_sender.subscribe()
+        self.session_manager.subscribe()
     }
 
     // Get session by CPN
     pub fn get_session_by_cpn(&self, cpn: &str) -> Option<PlaybackSession> {
-        let sessions = self.active_sessions.lock().unwrap();
-        sessions.get(cpn).cloned()
+        self.session_manager.get_session_by_cpn(cpn)
     }
 
     // Get session by device ID through list_id mapping
     pub fn get_session_for_device(&self, device_id: &str) -> Option<PlaybackSession> {
-        // Find list_id associated with this device (reverse lookup)
-        let list_id_to_device = self.list_id_to_device.lock().unwrap();
-        let found_list_id = list_id_to_device.iter().find_map(|(list_id, dev_id)| {
-            if dev_id == device_id {
-                Some(list_id.clone())
-            } else {
-                None
-            }
-        });
-
-        drop(list_id_to_device);
-
-        if let Some(list_id) = found_list_id {
-            // Find session with this list_id
-            let sessions = self.active_sessions.lock().unwrap();
-            sessions
-                .values()
-                .find(|s| s.list_id.as_deref() == Some(&list_id))
-                .cloned()
-        } else {
-            None
-        }
+        self.session_manager.get_session_for_device(device_id)
     }
 
     // Get most recent session
     pub fn get_current_session(&self) -> Option<PlaybackSession> {
-        let sessions = self.active_sessions.lock().unwrap();
-        sessions.values().max_by_key(|s| s.last_updated).cloned()
+        self.session_manager.get_current_session()
     }
 
     // Get all active sessions
     pub fn get_all_sessions(&self) -> Vec<PlaybackSession> {
-        let sessions = self.active_sessions.lock().unwrap();
-        sessions.values().cloned().collect()
+        self.session_manager.get_all_sessions()
+    }
+
+    // Get currently playing sessions
+    pub fn get_playing_sessions(&self) -> Vec<PlaybackSession> {
+        self.session_manager.get_playing_sessions()
     }
 
     // Pair with a screen using a pairing code
@@ -468,9 +448,9 @@ impl LoungeClient {
         let lounge_token = self.lounge_token.clone();
         let event_sender = self.event_sender.clone();
         let connected = self.connected.clone();
-        let active_sessions = self.active_sessions.clone();
-        let session_sender = self.session_sender.clone();
-        let list_id_to_device = self.list_id_to_device.clone();
+
+        // Clone the session manager for use in the task
+        let session_manager = self.session_manager.clone();
 
         task::spawn(async move {
             loop {
@@ -575,22 +555,21 @@ impl LoungeClient {
                 let mut reading_size = true;
                 let mut expected_size = 0;
 
+                let mut processor = ChunkProcessor {
+                    buffer: &mut buffer,
+                    size_buffer: &mut size_buffer,
+                    reading_size: &mut reading_size,
+                    expected_size: &mut expected_size,
+                    session_state: &session_state,
+                    sender: &event_sender,
+                    session_manager: &session_manager,
+                };
+
                 while let Some(chunk_result) = stream.next().await {
                     match chunk_result {
                         Ok(chunk) => {
                             // Process the bytes chunk
-                            process_bytes_chunk(
-                                &chunk,
-                                &mut buffer,
-                                &mut size_buffer,
-                                &mut reading_size,
-                                &mut expected_size,
-                                &session_state,
-                                &event_sender,
-                                &active_sessions,
-                                &session_sender,
-                                &list_id_to_device,
-                            );
+                            process_bytes_chunk(&chunk, &mut processor);
                         }
                         Err(e) => {
                             eprintln!("Error in stream: {}", e);
@@ -813,35 +792,25 @@ impl LoungeClient {
     }
 }
 
-// Group our session tracking structures to reduce function argument count
-#[allow(dead_code)]
-struct SessionTracking<'a> {
+// Helper struct to reduce number of arguments in process_bytes_chunk
+struct ChunkProcessor<'a> {
+    buffer: &'a mut String,
+    size_buffer: &'a mut String,
+    reading_size: &'a mut bool,
+    expected_size: &'a mut usize,
     session_state: &'a Arc<Mutex<SessionState>>,
-    active_sessions: &'a Arc<Mutex<HashMap<String, PlaybackSession>>>,
-    session_sender: &'a broadcast::Sender<PlaybackSession>,
-    list_id_to_device: &'a Arc<Mutex<HashMap<String, String>>>,
+    sender: &'a broadcast::Sender<LoungeEvent>,
+    session_manager: &'a PlaybackSessionManager,
 }
 
 // Process a chunk of bytes from the stream more efficiently
-#[allow(clippy::too_many_arguments)]
-fn process_bytes_chunk(
-    chunk: &Bytes,
-    buffer: &mut String,
-    size_buffer: &mut String,
-    reading_size: &mut bool,
-    expected_size: &mut usize,
-    session_state: &Arc<Mutex<SessionState>>,
-    sender: &broadcast::Sender<LoungeEvent>,
-    active_sessions: &Arc<Mutex<HashMap<String, PlaybackSession>>>,
-    session_sender: &broadcast::Sender<PlaybackSession>,
-    list_id_to_device: &Arc<Mutex<HashMap<String, String>>>,
-) {
+fn process_bytes_chunk(chunk: &Bytes, processor: &mut ChunkProcessor) {
     // Only create UTF-8 string from portions we need to process
     let chunk_slice = chunk.as_ref();
     let mut i = 0;
 
     while i < chunk_slice.len() {
-        if *reading_size {
+        if *processor.reading_size {
             // Find the newline if we're reading the size
             if let Some(newline_pos) = chunk_slice[i..].iter().position(|&b| b == b'\n') {
                 // Add any digits to the size buffer
@@ -849,13 +818,13 @@ fn process_bytes_chunk(
                 if !size_portion.is_empty() {
                     // Only create a string for the size portion
                     let size_str = String::from_utf8_lossy(size_portion);
-                    size_buffer.push_str(&size_str);
+                    processor.size_buffer.push_str(&size_str);
                 }
 
                 // Parse the size and prepare for content
-                *expected_size = size_buffer.parse::<usize>().unwrap_or(0);
-                size_buffer.clear();
-                *reading_size = false;
+                *processor.expected_size = processor.size_buffer.parse::<usize>().unwrap_or(0);
+                processor.size_buffer.clear();
+                *processor.reading_size = false;
 
                 // Move past the newline
                 i += newline_pos + 1;
@@ -863,36 +832,36 @@ fn process_bytes_chunk(
                 // Size continues in the next chunk
                 let size_portion = &chunk_slice[i..];
                 let size_str = String::from_utf8_lossy(size_portion);
-                size_buffer.push_str(&size_str);
+                processor.size_buffer.push_str(&size_str);
                 break;
             }
         } else {
             // Reading content - calculate how much more we need
-            let remaining = *expected_size - buffer.len();
+            let remaining = *processor.expected_size - processor.buffer.len();
             let available = chunk_slice.len() - i;
             let to_read = remaining.min(available);
 
             if to_read > 0 {
                 // Append directly to the buffer
                 let content_slice = &chunk_slice[i..i + to_read];
-                buffer.push_str(&String::from_utf8_lossy(content_slice));
+                processor
+                    .buffer
+                    .push_str(&String::from_utf8_lossy(content_slice));
                 i += to_read;
             }
 
             // Check if we've completed a message
-            if buffer.len() >= *expected_size {
+            if processor.buffer.len() >= *processor.expected_size {
                 // Process the complete chunk
                 process_event_chunk(
-                    buffer,
-                    session_state,
-                    sender,
-                    active_sessions,
-                    session_sender,
-                    list_id_to_device,
+                    processor.buffer,
+                    processor.session_state,
+                    processor.sender,
+                    processor.session_manager,
                 );
 
-                buffer.clear();
-                *reading_size = true;
+                processor.buffer.clear();
+                *processor.reading_size = true;
             } else {
                 // Need more data from the next chunk
                 break;
@@ -906,9 +875,7 @@ fn process_event_chunk(
     chunk: &str,
     session_state: &Arc<Mutex<SessionState>>,
     sender: &broadcast::Sender<LoungeEvent>,
-    active_sessions: &Arc<Mutex<HashMap<String, PlaybackSession>>>,
-    session_sender: &broadcast::Sender<PlaybackSession>,
-    list_id_to_device: &Arc<Mutex<HashMap<String, String>>>,
+    session_manager: &PlaybackSessionManager,
 ) {
     // Check if debug mode is enabled
     let debug_mode = {
@@ -960,44 +927,15 @@ fn process_event_chunk(
                 match event_type {
                     "onStateChange" => {
                         // Convert JSON value to PlaybackState directly
-                        if let Ok(mut state) =
-                            serde_json::from_value::<PlaybackState>(payload.clone())
+                        if let Ok(state) = serde_json::from_value::<PlaybackState>(payload.clone())
                         {
-                            // Process session tracking first
-                            if let Some(cpn) = &state.cpn {
-                                // First, check if we already have a session with video information
-                                {
-                                    let sessions = active_sessions.lock().unwrap();
-                                    if let Some(existing_session) = sessions.get(cpn) {
-                                        // Copy video ID from the session to the state event for display
-                                        if let Some(video_id) = &existing_session.video_id {
-                                            state.video_id = video_id.clone();
-                                        }
-                                    }
-                                } // Lock is automatically dropped here
-
-                                // Now update the session tracking data
-                                let mut sessions = active_sessions.lock().unwrap();
-                                if let Some(session) = sessions.get_mut(cpn) {
-                                    // Update existing session
-                                    if session.update_from_state_change(&state) {
-                                        let updated_session = session.clone();
-                                        drop(sessions);
-                                        // Send update if modified
-                                        let _ = session_sender.send(updated_session);
-                                    }
-                                } else if let Some(new_session) =
-                                    PlaybackSession::from_state_change(&state)
-                                {
-                                    // Create a new session
-                                    let session_clone = new_session.clone();
-                                    sessions.insert(cpn.clone(), new_session);
-                                    drop(sessions);
-                                    let _ = session_sender.send(session_clone);
-                                }
+                            // Use the session manager to process state change
+                            if state.cpn.is_some() {
+                                // Update existing session or create a new one
+                                session_manager.process_state_change(&state);
                             }
 
-                            // Send the event with the updated video ID
+                            // Send the event
                             let _ = sender.send(LoungeEvent::StateChange(state));
                         }
                     }
@@ -1013,59 +951,9 @@ fn process_event_chunk(
                                 is_playable: true,
                             };
 
-                            // Process session tracking
-                            if let Some(cpn) = &now_playing.cpn {
-                                if let Some(session) =
-                                    PlaybackSession::from_now_playing(&now_playing)
-                                {
-                                    let mut sessions = active_sessions.lock().unwrap();
-
-                                    // Store or update the session
-                                    let session_clone = session.clone();
-                                    sessions.insert(cpn.clone(), session);
-                                    drop(sessions);
-
-                                    // Update list_id to device mapping if available
-                                    if let Some(list_id) = &now_playing.list_id {
-                                        // Check if we already have device_id for this list_id
-                                        let mut device_id = None;
-                                        let list_map = list_id_to_device.lock().unwrap();
-                                        if debug_mode {
-                                            println!("DEBUG: Looking up device_id for list_id {} in NowPlaying event", list_id);
-                                            println!("DEBUG: Available mappings:");
-                                            for (list, dev) in list_map.iter() {
-                                                println!("  {} -> {}", list, dev);
-                                            }
-                                        }
-                                        if let Some(existing_device) = list_map.get(list_id) {
-                                            device_id = Some(existing_device.clone());
-                                            if debug_mode {
-                                                println!("DEBUG: Found existing device_id {} for list_id {} in NowPlaying event", 
-                                                         existing_device, list_id);
-                                            }
-                                        } else if debug_mode {
-                                            println!("DEBUG: No device_id found for list_id {} in NowPlaying event", list_id);
-                                        }
-                                        drop(list_map);
-
-                                        // If we have a device_id, update the session
-                                        if let Some(device_id) = device_id {
-                                            let mut sessions = active_sessions.lock().unwrap();
-                                            if let Some(session) = sessions.get_mut(cpn) {
-                                                if debug_mode {
-                                                    println!("DEBUG: Updating session for CPN {} with device_id {} in NowPlaying", 
-                                                             cpn, device_id);
-                                                }
-                                                session.device_id = Some(device_id);
-                                            } else if debug_mode {
-                                                println!("DEBUG: No session found for CPN {} in NowPlaying", cpn);
-                                            }
-                                        }
-                                    }
-
-                                    // Broadcast the session update
-                                    let _ = session_sender.send(session_clone);
-                                }
+                            // Use the session manager to process the now playing event
+                            if now_playing.cpn.is_some() {
+                                session_manager.process_now_playing(&now_playing);
                             }
 
                             // Send the original event
@@ -1075,40 +963,11 @@ fn process_event_chunk(
                     "loungeStatus" => {
                         if let Ok(status) = serde_json::from_value::<LoungeStatus>(payload.clone())
                         {
-                            if debug_mode {
-                                println!(
-                                    "DEBUG: LoungeStatus received: queue_id={:?}",
-                                    status.queue_id
-                                );
-                            }
-
-                            if debug_mode {
-                                println!(
-                                    "DEBUG: Parsing devices from LoungeStatus: {}",
-                                    status.devices
-                                );
-                            }
-
                             // Parse nested JSON - try to avoid unnecessary string conversions
                             let devices_result =
                                 serde_json::from_str::<Vec<Device>>(&status.devices);
 
-                            if debug_mode {
-                                match &devices_result {
-                                    Ok(_) => println!("DEBUG: Successfully parsed devices JSON"),
-                                    Err(e) => {
-                                        println!("DEBUG: Failed to parse devices JSON: {}", e)
-                                    }
-                                }
-                            }
-
                             if let Ok(devices) = devices_result {
-                                if debug_mode {
-                                    println!(
-                                        "DEBUG: Successfully parsed {} devices",
-                                        devices.len()
-                                    );
-                                }
                                 // Process device info efficiently
                                 let devices_with_info: Vec<Device> = devices
                                     .into_iter()
@@ -1122,88 +981,11 @@ fn process_event_chunk(
                                     })
                                     .collect();
 
-                                // Update list_id to device mappings if queue_id is available
-                                if let Some(queue_id) = &status.queue_id {
-                                    if debug_mode {
-                                        println!("DEBUG: Processing LoungeStatus with queue_id {} and {} devices", 
-                                                queue_id, devices_with_info.len());
-
-                                        // Debug print all devices
-                                        for (idx, device) in devices_with_info.iter().enumerate() {
-                                            println!(
-                                                "DEBUG: Device {}: id={}, name={}, type={}",
-                                                idx, device.id, device.name, device.device_type
-                                            );
-                                        }
-                                    }
-
-                                    // Find our REMOTE_CONTROL device
-                                    let remote_device = devices_with_info
-                                        .iter()
-                                        .find(|d| d.device_type == "REMOTE_CONTROL");
-                                    if debug_mode {
-                                        if remote_device.is_some() {
-                                            println!("DEBUG: Found REMOTE_CONTROL device");
-                                        } else {
-                                            println!("DEBUG: No REMOTE_CONTROL device found");
-                                        }
-                                    }
-                                    if let Some(remote_device) = remote_device {
-                                        let device_id = remote_device.id.clone();
-
-                                        if debug_mode {
-                                            println!(
-                                                "DEBUG: Using device_id {} for queue_id {}",
-                                                device_id, queue_id
-                                            );
-                                        }
-
-                                        // Update the 1:1 mapping
-                                        let mut list_map = list_id_to_device.lock().unwrap();
-                                        list_map.insert(queue_id.clone(), device_id.clone());
-                                        if debug_mode {
-                                            println!(
-                                                "DEBUG: Added mapping: list_id {} -> device_id {}",
-                                                queue_id, device_id
-                                            );
-                                            println!("DEBUG: Current mappings:");
-                                            for (list, dev) in list_map.iter() {
-                                                println!("  {} -> {}", list, dev);
-                                            }
-                                        }
-                                        drop(list_map);
-
-                                        // Update device_id field for any sessions with matching list_id
-                                        let mut sessions = active_sessions.lock().unwrap();
-                                        let mut updated_sessions = Vec::new();
-
-                                        for session in sessions.values_mut() {
-                                            if session.list_id.as_deref() == Some(queue_id) {
-                                                if debug_mode {
-                                                    println!("DEBUG: Updating session for CPN {} with device_id {}", 
-                                                             session.cpn, device_id);
-                                                }
-
-                                                if session.device_id != Some(device_id.clone()) {
-                                                    session.device_id = Some(device_id.clone());
-                                                    updated_sessions.push(session.clone());
-                                                }
-                                            }
-                                        }
-
-                                        drop(sessions);
-
-                                        // Send updates for any modified sessions
-                                        for session in updated_sessions {
-                                            let _ = session_sender.send(session);
-                                        }
-                                    } else if devices_with_info.is_empty() {
-                                        eprintln!("Warning: Received LoungeStatus with queue_id but no devices");
-                                    } else {
-                                        eprintln!("Warning: Received LoungeStatus with multiple devices for a single queue_id ({} devices)", 
-                                                 devices_with_info.len());
-                                    }
-                                }
+                                // Use the session manager to process device list
+                                session_manager.process_device_list(
+                                    &devices_with_info,
+                                    status.queue_id.as_ref(),
+                                );
 
                                 // Send the event
                                 let _ = sender.send(LoungeEvent::LoungeStatus(
