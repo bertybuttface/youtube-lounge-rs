@@ -593,39 +593,32 @@ impl LoungeClient {
     // Send a command to the screen
     pub async fn send_command(&self, command: PlaybackCommand) -> Result<(), LoungeError> {
         // Check if we're connected
-        {
-            let connected = self.connected.lock().unwrap();
-            if !*connected {
-                return Err(LoungeError::ConnectionClosed);
-            }
-        } // Lock is released here
+        if !*self.connected.lock().unwrap() {
+            return Err(LoungeError::ConnectionClosed);
+        }
 
         // Get the session state values we need before doing async operations
-        let sid;
-        let gsessionid;
-        let rid;
-        let ofs;
-
-        {
+        let (sid, gsessionid, rid, ofs) = {
             let mut state = self.session_state.lock().unwrap();
-            sid = state.sid.clone();
-            gsessionid = state.gsessionid.clone();
-            rid = state.increment_rid();
-            ofs = state.increment_offset();
-        } // Lock is released here
+            (
+                state.sid.clone(),
+                state.gsessionid.clone(),
+                state.increment_rid(),
+                state.increment_offset(),
+            )
+        };
 
         if sid.is_none() || gsessionid.is_none() {
             return Err(LoungeError::SessionExpired);
         }
 
-        // Build the params - getting unwrapped values
-        let sid_value = sid.as_ref().unwrap();
-        let gsession_value = gsessionid.as_ref().unwrap();
+        // Build the params - unwrap values once
+        let sid_value = sid.unwrap();
+        let gsession_value = gsessionid.unwrap();
         let rid_str = rid.to_string();
         let command_name = get_command_name(&command);
 
         // Using references where possible to avoid unnecessary clones
-        // Making sure all values are of the same type (&str)
         let params = [
             ("name", self.device_name.as_str()),
             ("loungeIdToken", self.lounge_token.as_str()),
@@ -637,10 +630,10 @@ impl LoungeClient {
             ("req0__sc", command_name.as_str()),
         ];
 
-        // Build the form data
+        // Build the form data with the offset
         let mut form_data = format!("count=1&ofs={}", ofs);
 
-        // Add command-specific parameters
+        // Add command-specific parameters efficiently
         match &command {
             PlaybackCommand::SetPlaylist { video_id } => {
                 form_data.push_str(&format!("&req0_videoId={}", video_id));
@@ -667,37 +660,27 @@ impl LoungeClient {
             .send()
             .await?;
 
-        // Handle errors
+        // Handle specific error status codes
         match response.status().as_u16() {
             400 => {
-                {
-                    let mut connected = self.connected.lock().unwrap();
-                    *connected = false;
-                } // Lock is released here
+                *self.connected.lock().unwrap() = false;
                 return Err(LoungeError::SessionExpired);
             }
             401 => {
-                {
-                    let mut connected = self.connected.lock().unwrap();
-                    *connected = false;
-                } // Lock is released here
+                *self.connected.lock().unwrap() = false;
                 return Err(LoungeError::TokenExpired);
             }
             410 => {
-                {
-                    let mut connected = self.connected.lock().unwrap();
-                    *connected = false;
-                } // Lock is released here
+                *self.connected.lock().unwrap() = false;
                 return Err(LoungeError::ConnectionClosed);
             }
+            _ if !response.status().is_success() => {
+                return Err(LoungeError::InvalidResponse(format!(
+                    "Command failed: {}",
+                    response.status()
+                )));
+            }
             _ => {}
-        }
-
-        if !response.status().is_success() {
-            return Err(LoungeError::InvalidResponse(format!(
-                "Command failed: {}",
-                response.status()
-            )));
         }
 
         Ok(())
@@ -724,41 +707,39 @@ impl LoungeClient {
     // Disconnect from the screen
     pub async fn disconnect(&self) -> Result<(), LoungeError> {
         // Only try to disconnect if connected
-        let is_connected;
-        {
-            let connected = self.connected.lock().unwrap();
-            is_connected = *connected;
-        } // Lock is released here
-
-        if !is_connected {
+        if !*self.connected.lock().unwrap() {
             return Ok(());
         }
 
         // Get session state values before any async operations
-        let sid;
-        let gsessionid;
-        let rid;
-
-        {
+        let (sid, gsessionid, rid) = {
             let mut state = self.session_state.lock().unwrap();
-            sid = state.sid.clone();
-            gsessionid = state.gsessionid.clone();
-            rid = state.increment_rid();
-        } // Lock is released here
+            (
+                state.sid.clone(),
+                state.gsessionid.clone(),
+                state.increment_rid(),
+            )
+        };
 
+        // If we don't have valid session IDs, there's nothing to disconnect
         if sid.is_none() || gsessionid.is_none() {
             return Ok(());
         }
 
-        // Build the params
+        // Build the params - get unwrapped values once
+        let sid_value = sid.unwrap();
+        let gsession_value = gsessionid.unwrap();
+        let rid_str = rid.to_string();
+
+        // Use references to avoid unnecessary cloning
         let params = [
-            ("name", self.device_name.clone()),
-            ("loungeIdToken", self.lounge_token.clone()),
-            ("SID", sid.unwrap()),
-            ("gsessionid", gsessionid.unwrap()),
-            ("VER", "8".to_string()),
-            ("v", "2".to_string()),
-            ("RID", rid.to_string()),
+            ("name", self.device_name.as_str()),
+            ("loungeIdToken", self.lounge_token.as_str()),
+            ("SID", sid_value.as_str()),
+            ("gsessionid", gsession_value.as_str()),
+            ("VER", "8"),
+            ("v", "2"),
+            ("RID", rid_str.as_str()),
         ];
 
         // Build the form data
@@ -775,10 +756,7 @@ impl LoungeClient {
             .await;
 
         // Set connected to false
-        {
-            let mut connected = self.connected.lock().unwrap();
-            *connected = false;
-        } // Lock is released here
+        *self.connected.lock().unwrap() = false;
 
         Ok(())
     }
@@ -870,6 +848,169 @@ fn process_bytes_chunk(chunk: &Bytes, processor: &mut ChunkProcessor) {
     }
 }
 
+// Event handler to process specific event types with generic handling
+struct EventHandler<'a> {
+    sender: &'a broadcast::Sender<LoungeEvent>,
+    session_manager: &'a PlaybackSessionManager,
+    debug_mode: bool,
+}
+
+impl<'a> EventHandler<'a> {
+    // Create a new event handler
+    fn new(
+        sender: &'a broadcast::Sender<LoungeEvent>,
+        session_manager: &'a PlaybackSessionManager,
+        debug_mode: bool,
+    ) -> Self {
+        Self {
+            sender,
+            session_manager,
+            debug_mode,
+        }
+    }
+
+    // Process standard events with a simple parsing pattern
+    fn process_simple_event<T, F>(&self, payload: &serde_json::Value, event_creator: F)
+    where
+        T: serde::de::DeserializeOwned,
+        F: FnOnce(T) -> LoungeEvent,
+    {
+        if let Ok(data) = serde_json::from_value::<T>(payload.clone()) {
+            let _ = self.sender.send(event_creator(data));
+        }
+    }
+
+    // Process a state change event
+    fn process_state_change(&self, payload: &serde_json::Value) {
+        if let Ok(state) = serde_json::from_value::<PlaybackState>(payload.clone()) {
+            // Use the session manager to process state change
+            if state.cpn.is_some() {
+                // Update existing session or create a new one
+                self.session_manager.process_state_change(&state);
+            }
+
+            // Send the event
+            let _ = self.sender.send(LoungeEvent::StateChange(state));
+        }
+    }
+
+    // Process a now playing event
+    fn process_now_playing(&self, payload: &serde_json::Value) {
+        if let Ok(mut now_playing) = serde_json::from_value::<NowPlaying>(payload.clone()) {
+            // Ensure video_data fields are populated
+            now_playing.video_data = VideoData {
+                video_id: now_playing.video_id.clone(),
+                author: "".to_string(), // Would need more data from a different source
+                title: "".to_string(),  // Would need more data from a different source
+                is_playable: true,
+            };
+
+            // Use the session manager to process the now playing event
+            if now_playing.cpn.is_some() {
+                self.session_manager.process_now_playing(&now_playing);
+            }
+
+            // Send the original event
+            let _ = self.sender.send(LoungeEvent::NowPlaying(now_playing));
+        }
+    }
+
+    // Process a lounge status event
+    fn process_lounge_status(&self, payload: &serde_json::Value) {
+        if let Ok(status) = serde_json::from_value::<LoungeStatus>(payload.clone()) {
+            // Parse nested JSON - try to avoid unnecessary string conversions
+            let devices_result = serde_json::from_str::<Vec<Device>>(&status.devices);
+
+            if let Ok(devices) = devices_result {
+                // Process device info efficiently
+                let devices_with_info: Vec<Device> = devices
+                    .into_iter()
+                    .map(|mut device| {
+                        if let Ok(info) =
+                            serde_json::from_str::<DeviceInfo>(&device.device_info_raw)
+                        {
+                            device.device_info = Some(info);
+                        }
+                        device
+                    })
+                    .collect();
+
+                // Use the session manager to process device list
+                self.session_manager
+                    .process_device_list(&devices_with_info, status.queue_id.as_ref());
+
+                // Send the event
+                let _ = self.sender.send(LoungeEvent::LoungeStatus(
+                    devices_with_info,
+                    status.queue_id.clone(),
+                ));
+            }
+        }
+    }
+
+    // Handle a given event type with its payload
+    fn handle_event(&self, event_type: &str, payload: &serde_json::Value) {
+        // Debugging if needed
+        if self.debug_mode {
+            println!("DEBUG: Event [{}] payload: {}", event_type, payload);
+        }
+
+        match event_type {
+            "onStateChange" => self.process_state_change(payload),
+            "nowPlaying" => self.process_now_playing(payload),
+            "loungeStatus" => self.process_lounge_status(payload),
+            "loungeScreenDisconnected" => {
+                let _ = self.sender.send(LoungeEvent::ScreenDisconnected);
+            }
+
+            // Simple events that follow the same pattern
+            "onAdStateChange" => {
+                self.process_simple_event::<AdState, _>(payload, LoungeEvent::AdStateChange)
+            }
+            "onSubtitlesTrackChanged" => self.process_simple_event::<SubtitlesTrackChanged, _>(
+                payload,
+                LoungeEvent::SubtitlesTrackChanged,
+            ),
+            "onAutoplayModeChanged" => self.process_simple_event::<AutoplayModeChanged, _>(
+                payload,
+                LoungeEvent::AutoplayModeChanged,
+            ),
+            "onHasPreviousNextChanged" => self.process_simple_event::<HasPreviousNextChanged, _>(
+                payload,
+                LoungeEvent::HasPreviousNextChanged,
+            ),
+            "onVideoQualityChanged" => self.process_simple_event::<VideoQualityChanged, _>(
+                payload,
+                LoungeEvent::VideoQualityChanged,
+            ),
+            "onAudioTrackChanged" => self.process_simple_event::<AudioTrackChanged, _>(
+                payload,
+                LoungeEvent::AudioTrackChanged,
+            ),
+            "playlistModified" => self.process_simple_event::<PlaylistModified, _>(
+                payload,
+                LoungeEvent::PlaylistModified,
+            ),
+            "autoplayUpNext" => {
+                self.process_simple_event::<AutoplayUpNext, _>(payload, LoungeEvent::AutoplayUpNext)
+            }
+            "onVolumeChanged" => {
+                self.process_simple_event::<VolumeChanged, _>(payload, LoungeEvent::VolumeChanged)
+            }
+
+            // Unknown events
+            _ => {
+                // Unknown event - include payload for debugging
+                let event_with_payload = format!("{} - payload: {}", event_type, payload);
+                if self.debug_mode {
+                    println!("DEBUG: Unknown event [{}] payload: {}", event_type, payload);
+                }
+                let _ = self.sender.send(LoungeEvent::Unknown(event_with_payload));
+            }
+        }
+    }
+}
+
 // Helper function to process event chunks more efficiently
 fn process_event_chunk(
     chunk: &str,
@@ -895,6 +1036,9 @@ fn process_event_chunk(
         Err(_) => return,
     };
 
+    // Create an event handler to process the events
+    let handler = EventHandler::new(sender, session_manager, debug_mode);
+
     for event in &data {
         if event.len() < 2 {
             continue;
@@ -917,158 +1061,8 @@ fn process_event_chunk(
             if let Some(event_type) = event_array.first().and_then(|t| t.as_str()) {
                 // Get a reference to the payload
                 let payload = &event_array[1];
-
-                let payload_json = payload.to_string();
-
-                if debug_mode {
-                    println!("DEBUG: Event [{}] payload: {}", event_type, payload_json);
-                }
-
-                match event_type {
-                    "onStateChange" => {
-                        // Convert JSON value to PlaybackState directly
-                        if let Ok(state) = serde_json::from_value::<PlaybackState>(payload.clone())
-                        {
-                            // Use the session manager to process state change
-                            if state.cpn.is_some() {
-                                // Update existing session or create a new one
-                                session_manager.process_state_change(&state);
-                            }
-
-                            // Send the event
-                            let _ = sender.send(LoungeEvent::StateChange(state));
-                        }
-                    }
-                    "nowPlaying" => {
-                        if let Ok(mut now_playing) =
-                            serde_json::from_value::<NowPlaying>(payload.clone())
-                        {
-                            // Ensure video_data fields are populated
-                            now_playing.video_data = VideoData {
-                                video_id: now_playing.video_id.clone(),
-                                author: "".to_string(), // Would need more data from a different source
-                                title: "".to_string(), // Would need more data from a different source
-                                is_playable: true,
-                            };
-
-                            // Use the session manager to process the now playing event
-                            if now_playing.cpn.is_some() {
-                                session_manager.process_now_playing(&now_playing);
-                            }
-
-                            // Send the original event
-                            let _ = sender.send(LoungeEvent::NowPlaying(now_playing));
-                        }
-                    }
-                    "loungeStatus" => {
-                        if let Ok(status) = serde_json::from_value::<LoungeStatus>(payload.clone())
-                        {
-                            // Parse nested JSON - try to avoid unnecessary string conversions
-                            let devices_result =
-                                serde_json::from_str::<Vec<Device>>(&status.devices);
-
-                            if let Ok(devices) = devices_result {
-                                // Process device info efficiently
-                                let devices_with_info: Vec<Device> = devices
-                                    .into_iter()
-                                    .map(|mut device| {
-                                        if let Ok(info) = serde_json::from_str::<DeviceInfo>(
-                                            &device.device_info_raw,
-                                        ) {
-                                            device.device_info = Some(info);
-                                        }
-                                        device
-                                    })
-                                    .collect();
-
-                                // Use the session manager to process device list
-                                session_manager.process_device_list(
-                                    &devices_with_info,
-                                    status.queue_id.as_ref(),
-                                );
-
-                                // Send the event
-                                let _ = sender.send(LoungeEvent::LoungeStatus(
-                                    devices_with_info,
-                                    status.queue_id.clone(),
-                                ));
-                            }
-                        }
-                    }
-                    "loungeScreenDisconnected" => {
-                        let _ = sender.send(LoungeEvent::ScreenDisconnected);
-                    }
-                    "onAdStateChange" => {
-                        if let Ok(ad_state) = serde_json::from_value::<AdState>(payload.clone()) {
-                            let _ = sender.send(LoungeEvent::AdStateChange(ad_state));
-                        }
-                    }
-                    "onSubtitlesTrackChanged" => {
-                        if let Ok(track) =
-                            serde_json::from_value::<SubtitlesTrackChanged>(payload.clone())
-                        {
-                            let _ = sender.send(LoungeEvent::SubtitlesTrackChanged(track));
-                        }
-                    }
-                    "onAutoplayModeChanged" => {
-                        if let Ok(mode) =
-                            serde_json::from_value::<AutoplayModeChanged>(payload.clone())
-                        {
-                            let _ = sender.send(LoungeEvent::AutoplayModeChanged(mode));
-                        }
-                    }
-                    "onHasPreviousNextChanged" => {
-                        if let Ok(has_prev_next) =
-                            serde_json::from_value::<HasPreviousNextChanged>(payload.clone())
-                        {
-                            let _ = sender.send(LoungeEvent::HasPreviousNextChanged(has_prev_next));
-                        }
-                    }
-                    "onVideoQualityChanged" => {
-                        if let Ok(quality) =
-                            serde_json::from_value::<VideoQualityChanged>(payload.clone())
-                        {
-                            let _ = sender.send(LoungeEvent::VideoQualityChanged(quality));
-                        }
-                    }
-                    "onAudioTrackChanged" => {
-                        if let Ok(audio_track) =
-                            serde_json::from_value::<AudioTrackChanged>(payload.clone())
-                        {
-                            let _ = sender.send(LoungeEvent::AudioTrackChanged(audio_track));
-                        }
-                    }
-                    "playlistModified" => {
-                        if let Ok(playlist) =
-                            serde_json::from_value::<PlaylistModified>(payload.clone())
-                        {
-                            let _ = sender.send(LoungeEvent::PlaylistModified(playlist));
-                        }
-                    }
-                    "autoplayUpNext" => {
-                        if let Ok(next) = serde_json::from_value::<AutoplayUpNext>(payload.clone())
-                        {
-                            let _ = sender.send(LoungeEvent::AutoplayUpNext(next));
-                        }
-                    }
-                    "onVolumeChanged" => {
-                        if let Ok(volume) = serde_json::from_value::<VolumeChanged>(payload.clone())
-                        {
-                            let _ = sender.send(LoungeEvent::VolumeChanged(volume));
-                        }
-                    }
-                    _ => {
-                        // Unknown event - include payload for debugging
-                        let event_with_payload = format!("{} - payload: {}", event_type, payload);
-                        if debug_mode {
-                            println!(
-                                "DEBUG: Unknown event [{}] payload: {}",
-                                event_type, payload_json
-                            );
-                        }
-                        let _ = sender.send(LoungeEvent::Unknown(event_with_payload));
-                    }
-                }
+                // Handle the event with our handler
+                handler.handle_event(event_type, payload);
             }
         }
     }
