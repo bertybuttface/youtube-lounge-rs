@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use futures::StreamExt;
 use once_cell::sync::Lazy;
+use reqwest::Response;
 use reqwest::{Client, ClientBuilder};
 use serde_json;
 use std::collections::HashMap;
@@ -29,6 +30,66 @@ static LONG_POLL_CLIENT: Lazy<Client> = Lazy::new(|| {
         .build()
         .unwrap()
 });
+
+/// Helper struct to handle HTTP responses and common error cases
+struct HttpResponseHandler<'a> {
+    connected: &'a Arc<Mutex<bool>>,
+    event_sender: &'a broadcast::Sender<LoungeEvent>,
+}
+
+impl<'a> HttpResponseHandler<'a> {
+    /// Create a new HTTP response handler
+    fn new(
+        connected: &'a Arc<Mutex<bool>>,
+        event_sender: &'a broadcast::Sender<LoungeEvent>,
+    ) -> Self {
+        Self {
+            connected,
+            event_sender,
+        }
+    }
+
+    /// Handle standard YouTube API error status codes
+    fn handle_error_status(&self, status: u16) -> Option<LoungeError> {
+        match status {
+            400 => {
+                // Session expired
+                *self.connected.lock().unwrap() = false;
+                let _ = self.event_sender.send(LoungeEvent::ScreenDisconnected);
+                Some(LoungeError::SessionExpired)
+            }
+            401 => {
+                // Token expired
+                *self.connected.lock().unwrap() = false;
+                let _ = self.event_sender.send(LoungeEvent::ScreenDisconnected);
+                Some(LoungeError::TokenExpired)
+            }
+            410 => {
+                // Session gone
+                *self.connected.lock().unwrap() = false;
+                let _ = self.event_sender.send(LoungeEvent::ScreenDisconnected);
+                Some(LoungeError::ConnectionClosed)
+            }
+            _ if status >= 400 => {
+                // Other error
+                Some(LoungeError::InvalidResponse(format!(
+                    "HTTP error status: {}",
+                    status
+                )))
+            }
+            _ => None, // No error for successful status codes
+        }
+    }
+
+    /// Process a response and return an error if the status code indicates an error
+    fn check_response(&self, response: &Response) -> Result<(), LoungeError> {
+        let status = response.status().as_u16();
+        if let Some(error) = self.handle_error_status(status) {
+            return Err(error);
+        }
+        Ok(())
+    }
+}
 
 use crate::commands::{get_command_name, PlaybackCommand};
 use crate::error::LoungeError;
@@ -519,33 +580,23 @@ impl LoungeClient {
                     }
                 };
 
-                // Check for specific error status codes
-                match response.status().as_u16() {
-                    400 => {
-                        // Session expired
-                        *connected.lock().unwrap() = false;
-                        let _ = event_sender.send(LoungeEvent::ScreenDisconnected);
-                        break;
-                    }
-                    401 => {
-                        // Token expired
-                        *connected.lock().unwrap() = false;
-                        let _ = event_sender.send(LoungeEvent::ScreenDisconnected);
-                        break;
-                    }
-                    410 => {
-                        // Session gone
-                        *connected.lock().unwrap() = false;
-                        let _ = event_sender.send(LoungeEvent::ScreenDisconnected);
-                        break;
-                    }
-                    _ => {}
-                }
+                // Create a response handler and check for errors
+                let response_handler = HttpResponseHandler::new(&connected, &event_sender);
 
-                if !response.status().is_success() {
-                    // Other error, retry after a delay
-                    sleep(Duration::from_secs(5)).await;
-                    continue;
+                // If response indicates an error, break or retry as appropriate
+                if let Err(error) = response_handler.check_response(&response) {
+                    match error {
+                        // For terminal errors, break the loop
+                        LoungeError::SessionExpired
+                        | LoungeError::TokenExpired
+                        | LoungeError::ConnectionClosed => break,
+
+                        // For other errors, retry after a delay
+                        _ => {
+                            sleep(Duration::from_secs(5)).await;
+                            continue;
+                        }
+                    }
                 }
 
                 // Process the streamed response
@@ -590,14 +641,29 @@ impl LoungeClient {
         Ok(())
     }
 
-    // Send a command to the screen
-    pub async fn send_command(&self, command: PlaybackCommand) -> Result<(), LoungeError> {
+    /// Prepare common API request parameters
+    fn prepare_api_params(&self, sid: &str, gsessionid: &str, rid: i32) -> Vec<(String, String)> {
+        let rid_str = rid.to_string();
+
+        vec![
+            ("name".to_string(), self.device_name.clone()),
+            ("loungeIdToken".to_string(), self.lounge_token.clone()),
+            ("SID".to_string(), sid.to_string()),
+            ("gsessionid".to_string(), gsessionid.to_string()),
+            ("VER".to_string(), "8".to_string()),
+            ("v".to_string(), "2".to_string()),
+            ("RID".to_string(), rid_str),
+        ]
+    }
+
+    /// Check connection state and session validity
+    fn check_session_state(&self) -> Result<(String, String, i32, i32), LoungeError> {
         // Check if we're connected
         if !*self.connected.lock().unwrap() {
             return Err(LoungeError::ConnectionClosed);
         }
 
-        // Get the session state values we need before doing async operations
+        // Get the session state values we need
         let (sid, gsessionid, rid, ofs) = {
             let mut state = self.session_state.lock().unwrap();
             (
@@ -608,27 +674,22 @@ impl LoungeClient {
             )
         };
 
-        if sid.is_none() || gsessionid.is_none() {
-            return Err(LoungeError::SessionExpired);
+        // Validate session IDs
+        match (sid, gsessionid) {
+            (Some(sid), Some(gsessionid)) => Ok((sid, gsessionid, rid, ofs)),
+            _ => Err(LoungeError::SessionExpired),
         }
+    }
 
-        // Build the params - unwrap values once
-        let sid_value = sid.unwrap();
-        let gsession_value = gsessionid.unwrap();
-        let rid_str = rid.to_string();
+    /// Send a command to the screen
+    pub async fn send_command(&self, command: PlaybackCommand) -> Result<(), LoungeError> {
+        // Get and validate session state
+        let (sid, gsessionid, rid, ofs) = self.check_session_state()?;
         let command_name = get_command_name(&command);
 
-        // Using references where possible to avoid unnecessary clones
-        let params = [
-            ("name", self.device_name.as_str()),
-            ("loungeIdToken", self.lounge_token.as_str()),
-            ("SID", sid_value.as_str()),
-            ("gsessionid", gsession_value.as_str()),
-            ("VER", "8"),
-            ("v", "2"),
-            ("RID", rid_str.as_str()),
-            ("req0__sc", command_name.as_str()),
-        ];
+        // Prepare base parameters
+        let mut params = self.prepare_api_params(&sid, &gsessionid, rid);
+        params.push(("req0__sc".to_string(), command_name.to_string()));
 
         // Build the form data with the offset
         let mut form_data = format!("count=1&ofs={}", ofs);
@@ -660,28 +721,9 @@ impl LoungeClient {
             .send()
             .await?;
 
-        // Handle specific error status codes
-        match response.status().as_u16() {
-            400 => {
-                *self.connected.lock().unwrap() = false;
-                return Err(LoungeError::SessionExpired);
-            }
-            401 => {
-                *self.connected.lock().unwrap() = false;
-                return Err(LoungeError::TokenExpired);
-            }
-            410 => {
-                *self.connected.lock().unwrap() = false;
-                return Err(LoungeError::ConnectionClosed);
-            }
-            _ if !response.status().is_success() => {
-                return Err(LoungeError::InvalidResponse(format!(
-                    "Command failed: {}",
-                    response.status()
-                )));
-            }
-            _ => {}
-        }
+        // Check for errors using our handler
+        let response_handler = HttpResponseHandler::new(&self.connected, &self.event_sender);
+        response_handler.check_response(&response)?;
 
         Ok(())
     }
@@ -704,48 +746,27 @@ impl LoungeClient {
         }
     }
 
-    // Disconnect from the screen
+    /// Disconnect from the screen
     pub async fn disconnect(&self) -> Result<(), LoungeError> {
         // Only try to disconnect if connected
         if !*self.connected.lock().unwrap() {
             return Ok(());
         }
 
-        // Get session state values before any async operations
-        let (sid, gsessionid, rid) = {
-            let mut state = self.session_state.lock().unwrap();
-            (
-                state.sid.clone(),
-                state.gsessionid.clone(),
-                state.increment_rid(),
-            )
+        // Get and validate session state (without offset)
+        let (sid, gsessionid, rid, _) = match self.check_session_state() {
+            Ok(state) => state,
+            // If session is invalid, we're already effectively disconnected
+            Err(_) => return Ok(()),
         };
 
-        // If we don't have valid session IDs, there's nothing to disconnect
-        if sid.is_none() || gsessionid.is_none() {
-            return Ok(());
-        }
+        // Prepare common parameters
+        let params = self.prepare_api_params(&sid, &gsessionid, rid);
 
-        // Build the params - get unwrapped values once
-        let sid_value = sid.unwrap();
-        let gsession_value = gsessionid.unwrap();
-        let rid_str = rid.to_string();
-
-        // Use references to avoid unnecessary cloning
-        let params = [
-            ("name", self.device_name.as_str()),
-            ("loungeIdToken", self.lounge_token.as_str()),
-            ("SID", sid_value.as_str()),
-            ("gsessionid", gsession_value.as_str()),
-            ("VER", "8"),
-            ("v", "2"),
-            ("RID", rid_str.as_str()),
-        ];
-
-        // Build the form data
+        // Build the terminate form data
         let form_data = "ui=&TYPE=terminate&clientDisconnectReason=MDX_SESSION_DISCONNECT_REASON_DISCONNECTED_BY_USER";
 
-        // Send the request
+        // Send the request - ignore errors since we'll mark as disconnected anyway
         let _ = self
             .client
             .post("https://www.youtube.com/api/lounge/bc/bind")
@@ -781,7 +802,7 @@ struct ChunkProcessor<'a> {
     session_manager: &'a PlaybackSessionManager,
 }
 
-// Process a chunk of bytes from the stream more efficiently
+/// A more efficient processor for YouTube API's chunked response format
 fn process_bytes_chunk(chunk: &Bytes, processor: &mut ChunkProcessor) {
     // Only create UTF-8 string from portions we need to process
     let chunk_slice = chunk.as_ref();
@@ -830,13 +851,13 @@ fn process_bytes_chunk(chunk: &Bytes, processor: &mut ChunkProcessor) {
 
             // Check if we've completed a message
             if processor.buffer.len() >= *processor.expected_size {
-                // Process the complete chunk
-                process_event_chunk(
-                    processor.buffer,
+                // Process the complete chunk with the event pipeline
+                let event_pipeline = EventPipeline::new(
                     processor.session_state,
                     processor.sender,
                     processor.session_manager,
                 );
+                event_pipeline.process_event_chunk(processor.buffer);
 
                 processor.buffer.clear();
                 *processor.reading_size = true;
@@ -848,28 +869,85 @@ fn process_bytes_chunk(chunk: &Bytes, processor: &mut ChunkProcessor) {
     }
 }
 
-// Event handler to process specific event types with generic handling
-struct EventHandler<'a> {
+/// Unified event processing pipeline for YouTube Lounge API events
+struct EventPipeline<'a> {
+    session_state: &'a Arc<Mutex<SessionState>>,
     sender: &'a broadcast::Sender<LoungeEvent>,
     session_manager: &'a PlaybackSessionManager,
     debug_mode: bool,
 }
 
-impl<'a> EventHandler<'a> {
-    // Create a new event handler
+impl<'a> EventPipeline<'a> {
+    /// Create a new event pipeline
     fn new(
+        session_state: &'a Arc<Mutex<SessionState>>,
         sender: &'a broadcast::Sender<LoungeEvent>,
         session_manager: &'a PlaybackSessionManager,
-        debug_mode: bool,
     ) -> Self {
+        // Get debug mode setting from session state
+        let debug_mode = {
+            let state = session_state.lock().unwrap();
+            state.debug_mode
+        };
+
         Self {
+            session_state,
             sender,
             session_manager,
             debug_mode,
         }
     }
 
-    // Process standard events with a simple parsing pattern
+    /// Process an event chunk received from the YouTube API
+    fn process_event_chunk(&self, chunk: &str) {
+        if chunk.trim().is_empty() {
+            return;
+        }
+
+        // Parse the JSON chunk
+        let json_result = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(chunk);
+
+        // Return early if JSON parsing fails
+        let events = match json_result {
+            Ok(data) => data,
+            Err(_) => return,
+        };
+
+        // Process each event in the chunk
+        for event in &events {
+            self.process_single_event(event);
+        }
+    }
+
+    /// Process a single event from the chunk
+    fn process_single_event(&self, event: &[serde_json::Value]) {
+        if event.len() < 2 {
+            return;
+        }
+
+        // Extract and update the event ID (AID)
+        if let Some(event_id) = event.first().and_then(|id| id.as_i64()) {
+            // Update the session state with the event ID
+            let mut state = self.session_state.lock().unwrap();
+            state.aid = Some(event_id.to_string());
+        }
+
+        // Process the event data if it has the right structure
+        if let Some(event_array) = event.get(1).and_then(|v| v.as_array()) {
+            if event_array.len() < 2 {
+                return;
+            }
+
+            if let Some(event_type) = event_array.first().and_then(|t| t.as_str()) {
+                // Get a reference to the payload
+                let payload = &event_array[1];
+                // Handle the event with the appropriate handler
+                self.handle_event(event_type, payload);
+            }
+        }
+    }
+
+    /// Process standard events with a simple parsing pattern
     fn process_simple_event<T, F>(&self, payload: &serde_json::Value, event_creator: F)
     where
         T: serde::de::DeserializeOwned,
@@ -880,7 +958,79 @@ impl<'a> EventHandler<'a> {
         }
     }
 
-    // Process a state change event
+    /// Handle the event with the appropriate handler based on event type
+    fn handle_event(&self, event_type: &str, payload: &serde_json::Value) {
+        // Debugging if needed
+        if self.debug_mode {
+            println!("DEBUG: Event [{}] payload: {}", event_type, payload);
+        }
+
+        match event_type {
+            // Complex events with session state updates
+            "onStateChange" => self.process_state_change(payload),
+            "nowPlaying" => self.process_now_playing(payload),
+            "loungeStatus" => self.process_lounge_status(payload),
+
+            // Simple notification events
+            "loungeScreenDisconnected" => {
+                let _ = self.sender.send(LoungeEvent::ScreenDisconnected);
+            }
+
+            // Simple events that follow the same pattern - grouped by category
+
+            // Ad-related events
+            "onAdStateChange" => {
+                self.process_simple_event::<AdState, _>(payload, LoungeEvent::AdStateChange)
+            }
+
+            // Track selection events
+            "onSubtitlesTrackChanged" => self.process_simple_event::<SubtitlesTrackChanged, _>(
+                payload,
+                LoungeEvent::SubtitlesTrackChanged,
+            ),
+            "onAudioTrackChanged" => self.process_simple_event::<AudioTrackChanged, _>(
+                payload,
+                LoungeEvent::AudioTrackChanged,
+            ),
+
+            // Playback control events
+            "onAutoplayModeChanged" => self.process_simple_event::<AutoplayModeChanged, _>(
+                payload,
+                LoungeEvent::AutoplayModeChanged,
+            ),
+            "onHasPreviousNextChanged" => self.process_simple_event::<HasPreviousNextChanged, _>(
+                payload,
+                LoungeEvent::HasPreviousNextChanged,
+            ),
+            "onVideoQualityChanged" => self.process_simple_event::<VideoQualityChanged, _>(
+                payload,
+                LoungeEvent::VideoQualityChanged,
+            ),
+            "onVolumeChanged" => {
+                self.process_simple_event::<VolumeChanged, _>(payload, LoungeEvent::VolumeChanged)
+            }
+
+            // Playlist-related events
+            "playlistModified" => self.process_simple_event::<PlaylistModified, _>(
+                payload,
+                LoungeEvent::PlaylistModified,
+            ),
+            "autoplayUpNext" => {
+                self.process_simple_event::<AutoplayUpNext, _>(payload, LoungeEvent::AutoplayUpNext)
+            }
+
+            // Unknown events
+            _ => {
+                let event_with_payload = format!("{} - payload: {}", event_type, payload);
+                if self.debug_mode {
+                    println!("DEBUG: Unknown event [{}] payload: {}", event_type, payload);
+                }
+                let _ = self.sender.send(LoungeEvent::Unknown(event_with_payload));
+            }
+        }
+    }
+
+    /// Process a state change event
     fn process_state_change(&self, payload: &serde_json::Value) {
         if let Ok(state) = serde_json::from_value::<PlaybackState>(payload.clone()) {
             // Use the session manager to process state change
@@ -894,14 +1044,14 @@ impl<'a> EventHandler<'a> {
         }
     }
 
-    // Process a now playing event
+    /// Process a now playing event
     fn process_now_playing(&self, payload: &serde_json::Value) {
         if let Ok(mut now_playing) = serde_json::from_value::<NowPlaying>(payload.clone()) {
             // Ensure video_data fields are populated
             now_playing.video_data = VideoData {
                 video_id: now_playing.video_id.clone(),
-                author: "".to_string(), // Would need more data from a different source
-                title: "".to_string(),  // Would need more data from a different source
+                author: "".to_string(),
+                title: "".to_string(),
                 is_playable: true,
             };
 
@@ -915,7 +1065,7 @@ impl<'a> EventHandler<'a> {
         }
     }
 
-    // Process a lounge status event
+    /// Process a lounge status event which contains device information
     fn process_lounge_status(&self, payload: &serde_json::Value) {
         if let Ok(status) = serde_json::from_value::<LoungeStatus>(payload.clone()) {
             // Parse nested JSON - try to avoid unnecessary string conversions
@@ -944,125 +1094,6 @@ impl<'a> EventHandler<'a> {
                     devices_with_info,
                     status.queue_id.clone(),
                 ));
-            }
-        }
-    }
-
-    // Handle a given event type with its payload
-    fn handle_event(&self, event_type: &str, payload: &serde_json::Value) {
-        // Debugging if needed
-        if self.debug_mode {
-            println!("DEBUG: Event [{}] payload: {}", event_type, payload);
-        }
-
-        match event_type {
-            "onStateChange" => self.process_state_change(payload),
-            "nowPlaying" => self.process_now_playing(payload),
-            "loungeStatus" => self.process_lounge_status(payload),
-            "loungeScreenDisconnected" => {
-                let _ = self.sender.send(LoungeEvent::ScreenDisconnected);
-            }
-
-            // Simple events that follow the same pattern
-            "onAdStateChange" => {
-                self.process_simple_event::<AdState, _>(payload, LoungeEvent::AdStateChange)
-            }
-            "onSubtitlesTrackChanged" => self.process_simple_event::<SubtitlesTrackChanged, _>(
-                payload,
-                LoungeEvent::SubtitlesTrackChanged,
-            ),
-            "onAutoplayModeChanged" => self.process_simple_event::<AutoplayModeChanged, _>(
-                payload,
-                LoungeEvent::AutoplayModeChanged,
-            ),
-            "onHasPreviousNextChanged" => self.process_simple_event::<HasPreviousNextChanged, _>(
-                payload,
-                LoungeEvent::HasPreviousNextChanged,
-            ),
-            "onVideoQualityChanged" => self.process_simple_event::<VideoQualityChanged, _>(
-                payload,
-                LoungeEvent::VideoQualityChanged,
-            ),
-            "onAudioTrackChanged" => self.process_simple_event::<AudioTrackChanged, _>(
-                payload,
-                LoungeEvent::AudioTrackChanged,
-            ),
-            "playlistModified" => self.process_simple_event::<PlaylistModified, _>(
-                payload,
-                LoungeEvent::PlaylistModified,
-            ),
-            "autoplayUpNext" => {
-                self.process_simple_event::<AutoplayUpNext, _>(payload, LoungeEvent::AutoplayUpNext)
-            }
-            "onVolumeChanged" => {
-                self.process_simple_event::<VolumeChanged, _>(payload, LoungeEvent::VolumeChanged)
-            }
-
-            // Unknown events
-            _ => {
-                // Unknown event - include payload for debugging
-                let event_with_payload = format!("{} - payload: {}", event_type, payload);
-                if self.debug_mode {
-                    println!("DEBUG: Unknown event [{}] payload: {}", event_type, payload);
-                }
-                let _ = self.sender.send(LoungeEvent::Unknown(event_with_payload));
-            }
-        }
-    }
-}
-
-// Helper function to process event chunks more efficiently
-fn process_event_chunk(
-    chunk: &str,
-    session_state: &Arc<Mutex<SessionState>>,
-    sender: &broadcast::Sender<LoungeEvent>,
-    session_manager: &PlaybackSessionManager,
-) {
-    // Check if debug mode is enabled
-    let debug_mode = {
-        let state = session_state.lock().unwrap();
-        state.debug_mode
-    };
-    if chunk.trim().is_empty() {
-        return;
-    }
-
-    // Using a reference to avoid cloning where possible
-    let json_result = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(chunk);
-
-    // Return early if JSON parsing fails
-    let data = match json_result {
-        Ok(data) => data,
-        Err(_) => return,
-    };
-
-    // Create an event handler to process the events
-    let handler = EventHandler::new(sender, session_manager, debug_mode);
-
-    for event in &data {
-        if event.len() < 2 {
-            continue;
-        }
-
-        // Extract the event ID and update the AID
-        if let Some(event_id) = event.first().and_then(|id| id.as_i64()) {
-            // Update the session state with the event ID
-            let mut state = session_state.lock().unwrap();
-            state.aid = Some(event_id.to_string());
-            drop(state);
-        }
-
-        // Process the event data if it has the right structure
-        if let Some(event_array) = event.get(1).and_then(|v| v.as_array()) {
-            if event_array.len() < 2 {
-                continue;
-            }
-
-            if let Some(event_type) = event_array.first().and_then(|t| t.as_str()) {
-                // Get a reference to the payload
-                let payload = &event_array[1];
-                // Handle the event with our handler
-                handler.handle_event(event_type, payload);
             }
         }
     }
