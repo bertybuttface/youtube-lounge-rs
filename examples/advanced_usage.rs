@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use tokio::time::{sleep, Duration};
+use youtube_lounge_rs::models::PlaybackSession;
 use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand, Screen};
 
 // Structure to store authentication data for multiple screens
@@ -232,11 +233,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Get a receiver to listen for events
+    // Get receivers to listen for events and session updates
     let mut rx = client.event_receiver();
+    let mut session_rx = client.session_receiver();
 
     // Spawn a task to handle events
     let event_handle = tokio::spawn(async move {
+        // Create a separate task for session events
+        let _session_handle = tokio::spawn(async move {
+            loop {
+                match session_rx.recv().await {
+                    Ok(session) => {
+                        println!("\n=== PlaybackSession Update ===");
+                        println!(
+                            "  Video ID: {}",
+                            session.video_id.as_deref().unwrap_or("Unknown")
+                        );
+                        println!("  CPN: {}", session.cpn);
+                        println!(
+                            "  Progress: {:.2}/{:.2} ({:.1}%)",
+                            session.current_time,
+                            session.duration,
+                            session.progress_percentage()
+                        );
+                        println!("  State: {} ({})", session.state_name(), session.state);
+
+                        if let Some(list_id) = &session.list_id {
+                            println!("  Playlist: {}", list_id);
+                        }
+
+                        if let Some(history) = &session.video_history {
+                            println!("  Video history: {} videos", history.len());
+                        }
+                        println!("=============================\n");
+                    }
+                    Err(e) => match e {
+                        tokio::sync::broadcast::error::RecvError::Closed => {
+                            println!("Session channel closed");
+                            break;
+                        }
+                        tokio::sync::broadcast::error::RecvError::Lagged(missed) => {
+                            println!(
+                                "Warning: Session receiver lagging, missed {} updates",
+                                missed
+                            );
+                        }
+                    },
+                }
+            }
+        });
+
+        // Main event loop
         loop {
             match rx.recv().await {
                 Ok(event) => {
@@ -261,8 +308,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if let Some(cpn) = &state.cpn {
                                 println!("  CPN: {}", cpn);
                             }
-                            // Track source of state change events (important for debugging)
-                            println!("  NOTE: Check if this event was triggered by a YouTube client action");
                         }
                         LoungeEvent::NowPlaying(now_playing) => {
                             println!("Now playing:");
@@ -388,7 +433,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Wait a bit to let the video start
-    sleep(Duration::from_secs(5)).await;
+    sleep(Duration::from_secs(3)).await;
 
     // Pause the video with automatic token refresh
     match client
@@ -399,7 +444,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to pause: {}", e),
     }
 
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // Resume playback with automatic token refresh
     match client
@@ -410,7 +455,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to resume: {}", e),
     }
 
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // Seek to 30 seconds with automatic token refresh
     match client
@@ -421,7 +466,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to seek: {}", e),
     }
 
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // Adjust volume with automatic token refresh
     match client
@@ -433,7 +478,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Wait a bit between commands
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // Mute the volume
     println!("Muting audio...");
@@ -445,7 +490,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to mute: {}", e),
     }
 
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // Unmute the volume
     println!("Unmuting audio...");
@@ -461,8 +506,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // to see if we can observe events from YouTube client actions
     println!("\nNow waiting for 60 seconds - please perform actions in the YouTube client");
     println!("Try playing, pausing, seeking, etc. directly on your device");
-    println!("Watch for onStateChange events in the debug output\n");
-    sleep(Duration::from_secs(60)).await;
+    println!("Watch for event updates and PlaybackSession updates in the output\n");
+
+    // Add a demonstration of session query capabilities
+    sleep(Duration::from_secs(30)).await;
+
+    println!("\n=== Session Query Demonstration ===");
+    // Get all active sessions
+    let all_sessions = client.get_all_sessions();
+    println!(
+        "There are currently {} active session(s)",
+        all_sessions.len()
+    );
+
+    // If we have any sessions, demonstrate querying by CPN
+    if !all_sessions.is_empty() {
+        let cpn = &all_sessions[0].cpn;
+        println!("Querying session with CPN: {}", cpn);
+        if let Some(session) = client.get_session_by_cpn(cpn) {
+            println!(
+                "  Found session: {} in state {}",
+                session.video_id.as_deref().unwrap_or("Unknown"),
+                session.state_name()
+            );
+        }
+    }
+
+    sleep(Duration::from_secs(30)).await;
 
     // Disconnect from the screen
     println!("Disconnecting from screen...");
@@ -474,6 +544,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Abort the event handler to ensure clean exit
     event_handle.abort();
     println!("Event handler aborted, example complete.");
+
+    // Display any current sessions before exiting
+    println!("\nFinal session state before exit:");
+    if let Some(current_session) = client.get_current_session() {
+        println!(
+            "  Currently playing: {}",
+            current_session.video_id.as_ref().map_or("Unknown", |id| id)
+        );
+        println!(
+            "  At position: {:.2}/{:.2}",
+            current_session.current_time, current_session.duration
+        );
+        println!("  State: {}", current_session.state_name());
+    } else {
+        println!("  No active session");
+    }
 
     Ok(())
 }
