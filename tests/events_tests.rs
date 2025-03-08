@@ -20,15 +20,17 @@ fn test_lounge_event_variants() {
     };
 
     let playback_state = PlaybackState {
-        state: 1,
-        current_time: 42.5,
-        duration: 180.0,
-        seekable_start_time: 0.0,
-        seekable_end_time: 180.0,
+        state: "1".to_string(),
+        current_time: "42.5".to_string(),
+        duration: "180.0".to_string(),
+        seekable_start_time: "0.0".to_string(),
+        seekable_end_time: "180.0".to_string(),
         video_id: "dQw4w9WgXcQ".to_string(),
-        volume: 50,
-        muted: false,
+        volume: "50".to_string(),
+        muted: "false".to_string(),
         video_data: video_data.clone(),
+        cpn: Some("test_cpn".to_string()),
+        loaded_time: "60.0".to_string(),
     };
 
     let _event = LoungeEvent::StateChange(playback_state);
@@ -36,10 +38,16 @@ fn test_lounge_event_variants() {
     // Test NowPlaying
     let now_playing = NowPlaying {
         video_id: "dQw4w9WgXcQ".to_string(),
-        current_time: 42.5,
+        current_time: "42.5".to_string(),
         list_id: Some("PL12345".to_string()),
-        state: 1,
+        state: "1".to_string(),
         video_data,
+        cpn: Some("test_cpn".to_string()),
+        loaded_time: "60.0".to_string(),
+        duration: "180.0".to_string(),
+        seekable_start_time: "0.0".to_string(),
+        seekable_end_time: "180.0".to_string(),
+        mdx_expanded_receiver_video_id_list: Some("abc123,def456".to_string()),
     };
 
     let _event = LoungeEvent::NowPlaying(now_playing);
@@ -158,22 +166,30 @@ fn test_lounge_event_matching() {
     let events = vec![
         LoungeEvent::SessionEstablished,
         LoungeEvent::StateChange(PlaybackState {
-            state: 0,
-            current_time: 0.0,
-            duration: 0.0,
-            seekable_start_time: 0.0,
-            seekable_end_time: 0.0,
+            state: "0".to_string(),
+            current_time: "0.0".to_string(),
+            duration: "0.0".to_string(),
+            seekable_start_time: "0.0".to_string(),
+            seekable_end_time: "0.0".to_string(),
             video_id: "".to_string(),
-            volume: 0,
-            muted: false,
+            volume: "0".to_string(),
+            muted: "false".to_string(),
             video_data: video_data.clone(),
+            cpn: None,
+            loaded_time: "0.0".to_string(),
         }),
         LoungeEvent::NowPlaying(NowPlaying {
             video_id: "".to_string(),
-            current_time: 0.0,
+            current_time: "0.0".to_string(),
             list_id: None,
-            state: 0,
+            state: "0".to_string(),
             video_data,
+            cpn: None,
+            duration: "0.0".to_string(),
+            loaded_time: "0.0".to_string(),
+            seekable_start_time: "0.0".to_string(),
+            seekable_end_time: "0.0".to_string(),
+            mdx_expanded_receiver_video_id_list: None,
         }),
         LoungeEvent::LoungeStatus(vec![], None),
         LoungeEvent::ScreenDisconnected,
@@ -309,14 +325,16 @@ fn test_ad_utility_methods() {
     // Test LoungeEvent ad-related methods
     let ad_event = LoungeEvent::AdStateChange(ad_state);
     let state_event = LoungeEvent::StateChange(PlaybackState {
-        state: 1,
-        current_time: 0.0,
-        duration: 0.0,
-        seekable_start_time: 0.0,
-        seekable_end_time: 0.0,
+        state: "1".to_string(),
+        current_time: "0.0".to_string(),
+        duration: "0.0".to_string(),
+        seekable_start_time: "0.0".to_string(),
+        seekable_end_time: "0.0".to_string(),
         video_id: "".to_string(),
-        volume: 0,
-        muted: false,
+        volume: "0".to_string(),
+        muted: "false".to_string(),
+        loaded_time: "0.0".to_string(),
+        cpn: None,
         video_data: VideoData {
             video_id: "".to_string(),
             author: "".to_string(),

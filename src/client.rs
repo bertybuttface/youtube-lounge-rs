@@ -35,9 +35,9 @@ use crate::error::LoungeError;
 use crate::events::LoungeEvent;
 use crate::models::{
     AdState, AudioTrackChanged, AutoplayModeChanged, AutoplayUpNext, Device, DeviceInfo,
-    HasPreviousNextChanged, LoungeStatus, NowPlaying, PlaybackState, PlaylistModified, Screen,
-    ScreenAvailabilityResponse, ScreenResponse, ScreensResponse, SubtitlesTrackChanged,
-    VideoQualityChanged, VolumeChanged,
+    HasPreviousNextChanged, LoungeStatus, NowPlaying, PlaybackSession, PlaybackState,
+    PlaylistModified, Screen, ScreenAvailabilityResponse, ScreenResponse, ScreensResponse,
+    SubtitlesTrackChanged, VideoData, VideoQualityChanged, VolumeChanged,
 };
 
 // Session state
@@ -88,6 +88,10 @@ pub struct LoungeClient {
     event_sender: broadcast::Sender<LoungeEvent>,
     connected: Arc<Mutex<bool>>,
     token_refresh_callback: Option<TokenRefreshCallback>,
+    // New fields for session tracking
+    active_sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
+    session_sender: broadcast::Sender<PlaybackSession>,
+    list_id_to_devices: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
 impl LoungeClient {
@@ -96,7 +100,10 @@ impl LoungeClient {
         let client = SHARED_CLIENT.clone();
 
         // Create a broadcast channel with capacity for 100 events
-        let (tx, _rx) = broadcast::channel(100);
+        let (event_tx, _event_rx) = broadcast::channel(100);
+
+        // Create a broadcast channel for playback sessions with capacity for 100 sessions
+        let (session_tx, _session_rx) = broadcast::channel(100);
 
         LoungeClient {
             client,
@@ -104,9 +111,12 @@ impl LoungeClient {
             lounge_token: lounge_token.to_string(),
             device_name: device_name.to_string(),
             session_state: Arc::new(Mutex::new(SessionState::new())),
-            event_sender: tx,
+            event_sender: event_tx,
             connected: Arc::new(Mutex::new(false)),
             token_refresh_callback: None,
+            active_sessions: Arc::new(Mutex::new(HashMap::new())),
+            session_sender: session_tx,
+            list_id_to_devices: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -153,6 +163,55 @@ impl LoungeClient {
         // Subscribe directly to the broadcast channel
         // This avoids the overhead of spawning a task and forwarding messages
         self.event_sender.subscribe()
+    }
+
+    // Get the session receiver for listening to playback session updates
+    pub fn session_receiver(&self) -> broadcast::Receiver<PlaybackSession> {
+        self.session_sender.subscribe()
+    }
+
+    // Get session by CPN
+    pub fn get_session_by_cpn(&self, cpn: &str) -> Option<PlaybackSession> {
+        let sessions = self.active_sessions.lock().unwrap();
+        sessions.get(cpn).cloned()
+    }
+
+    // Get session by device ID through list_id mapping
+    pub fn get_session_for_device(&self, device_id: &str) -> Option<PlaybackSession> {
+        // Find list_id associated with this device
+        let list_id_to_devices = self.list_id_to_devices.lock().unwrap();
+        let found_list_id = list_id_to_devices.iter().find_map(|(list_id, devices)| {
+            if devices.contains(&device_id.to_string()) {
+                Some(list_id.clone())
+            } else {
+                None
+            }
+        });
+
+        drop(list_id_to_devices);
+
+        if let Some(list_id) = found_list_id {
+            // Find session with this list_id
+            let sessions = self.active_sessions.lock().unwrap();
+            sessions
+                .values()
+                .find(|s| s.list_id.as_deref() == Some(&list_id))
+                .cloned()
+        } else {
+            None
+        }
+    }
+
+    // Get most recent session
+    pub fn get_current_session(&self) -> Option<PlaybackSession> {
+        let sessions = self.active_sessions.lock().unwrap();
+        sessions.values().max_by_key(|s| s.last_updated).cloned()
+    }
+
+    // Get all active sessions
+    pub fn get_all_sessions(&self) -> Vec<PlaybackSession> {
+        let sessions = self.active_sessions.lock().unwrap();
+        sessions.values().cloned().collect()
     }
 
     // Pair with a screen using a pairing code
@@ -402,6 +461,9 @@ impl LoungeClient {
         let lounge_token = self.lounge_token.clone();
         let event_sender = self.event_sender.clone();
         let connected = self.connected.clone();
+        let active_sessions = self.active_sessions.clone();
+        let session_sender = self.session_sender.clone();
+        let list_id_to_devices = self.list_id_to_devices.clone();
 
         task::spawn(async move {
             loop {
@@ -518,6 +580,9 @@ impl LoungeClient {
                                 &mut expected_size,
                                 &session_state,
                                 &event_sender,
+                                &active_sessions,
+                                &session_sender,
+                                &list_id_to_devices,
                             )
                             .await;
                         }
@@ -708,7 +773,17 @@ impl LoungeClient {
     }
 }
 
+// Group our session tracking structures to reduce function argument count
+#[allow(dead_code)]
+struct SessionTracking<'a> {
+    session_state: &'a Arc<Mutex<SessionState>>,
+    active_sessions: &'a Arc<Mutex<HashMap<String, PlaybackSession>>>,
+    session_sender: &'a broadcast::Sender<PlaybackSession>,
+    list_id_to_devices: &'a Arc<Mutex<HashMap<String, Vec<String>>>>,
+}
+
 // Process a chunk of bytes from the stream more efficiently
+#[allow(clippy::too_many_arguments)]
 async fn process_bytes_chunk(
     chunk: &Bytes,
     buffer: &mut String,
@@ -717,6 +792,9 @@ async fn process_bytes_chunk(
     expected_size: &mut usize,
     session_state: &Arc<Mutex<SessionState>>,
     sender: &broadcast::Sender<LoungeEvent>,
+    active_sessions: &Arc<Mutex<HashMap<String, PlaybackSession>>>,
+    session_sender: &broadcast::Sender<PlaybackSession>,
+    list_id_to_devices: &Arc<Mutex<HashMap<String, Vec<String>>>>,
 ) {
     // Only create UTF-8 string from portions we need to process
     let chunk_slice = chunk.as_ref();
@@ -764,7 +842,15 @@ async fn process_bytes_chunk(
             // Check if we've completed a message
             if buffer.len() >= *expected_size {
                 // Process the complete chunk
-                process_event_chunk(buffer, session_state, sender).await;
+                process_event_chunk(
+                    buffer,
+                    session_state,
+                    sender,
+                    active_sessions,
+                    session_sender,
+                    list_id_to_devices,
+                )
+                .await;
 
                 buffer.clear();
                 *reading_size = true;
@@ -781,6 +867,9 @@ async fn process_event_chunk(
     chunk: &str,
     session_state: &Arc<Mutex<SessionState>>,
     sender: &broadcast::Sender<LoungeEvent>,
+    active_sessions: &Arc<Mutex<HashMap<String, PlaybackSession>>>,
+    session_sender: &broadcast::Sender<PlaybackSession>,
+    list_id_to_devices: &Arc<Mutex<HashMap<String, Vec<String>>>>,
 ) {
     // Check if debug mode is enabled
     let debug_mode = {
@@ -832,15 +921,87 @@ async fn process_event_chunk(
                 match event_type {
                     "onStateChange" => {
                         // Convert JSON value to PlaybackState directly
-                        if let Ok(state) = serde_json::from_value::<PlaybackState>(payload.clone())
+                        if let Ok(mut state) =
+                            serde_json::from_value::<PlaybackState>(payload.clone())
                         {
+                            // Process session tracking first
+                            if let Some(cpn) = &state.cpn {
+                                // First, check if we already have a session with video information
+                                {
+                                    let sessions = active_sessions.lock().unwrap();
+                                    if let Some(existing_session) = sessions.get(cpn) {
+                                        // Copy video ID from the session to the state event for display
+                                        if let Some(video_id) = &existing_session.video_id {
+                                            state.video_id = video_id.clone();
+                                        }
+                                    }
+                                } // Lock is automatically dropped here
+
+                                // Now update the session tracking data
+                                let mut sessions = active_sessions.lock().unwrap();
+                                if let Some(session) = sessions.get_mut(cpn) {
+                                    // Update existing session
+                                    if session.update_from_state_change(&state) {
+                                        let updated_session = session.clone();
+                                        drop(sessions);
+                                        // Send update if modified
+                                        let _ = session_sender.send(updated_session);
+                                    }
+                                } else if let Some(new_session) =
+                                    PlaybackSession::from_state_change(&state)
+                                {
+                                    // Create a new session
+                                    let session_clone = new_session.clone();
+                                    sessions.insert(cpn.clone(), new_session);
+                                    drop(sessions);
+                                    let _ = session_sender.send(session_clone);
+                                }
+                            }
+
+                            // Send the event with the updated video ID
                             let _ = sender.send(LoungeEvent::StateChange(state));
                         }
                     }
                     "nowPlaying" => {
-                        if let Ok(now_playing) =
+                        if let Ok(mut now_playing) =
                             serde_json::from_value::<NowPlaying>(payload.clone())
                         {
+                            // Ensure video_data fields are populated
+                            now_playing.video_data = VideoData {
+                                video_id: now_playing.video_id.clone(),
+                                author: "".to_string(), // Would need more data from a different source
+                                title: "".to_string(), // Would need more data from a different source
+                                is_playable: true,
+                            };
+
+                            // Process session tracking
+                            if let Some(cpn) = &now_playing.cpn {
+                                if let Some(session) =
+                                    PlaybackSession::from_now_playing(&now_playing)
+                                {
+                                    let mut sessions = active_sessions.lock().unwrap();
+
+                                    // Store or update the session
+                                    let session_clone = session.clone();
+                                    sessions.insert(cpn.clone(), session);
+                                    drop(sessions);
+
+                                    // Update list_id to device mapping if available
+                                    if let Some(list_id) = &now_playing.list_id {
+                                        // We'll update this mapping when processing loungeStatus events
+                                        // But store the relationship here
+                                        let mut list_map = list_id_to_devices.lock().unwrap();
+                                        if !list_map.contains_key(list_id) {
+                                            list_map.insert(list_id.clone(), Vec::new());
+                                        }
+                                    }
+
+                                    // Broadcast the session update
+                                    let _ = session_sender.send(session_clone);
+                                }
+                            }
+
+                            // Send the original event
                             let _ = sender.send(LoungeEvent::NowPlaying(now_playing));
                         }
                     }
@@ -865,6 +1026,17 @@ async fn process_event_chunk(
                                     })
                                     .collect();
 
+                                // Update list_id to device mappings if queue_id is available
+                                if let Some(queue_id) = &status.queue_id {
+                                    let device_ids: Vec<String> =
+                                        devices_with_info.iter().map(|d| d.name.clone()).collect();
+
+                                    // Update the mapping
+                                    let mut list_map = list_id_to_devices.lock().unwrap();
+                                    list_map.insert(queue_id.clone(), device_ids);
+                                }
+
+                                // Send the event
                                 let _ = sender.send(LoungeEvent::LoungeStatus(
                                     devices_with_info,
                                     status.queue_id.clone(),
@@ -898,13 +1070,6 @@ async fn process_event_chunk(
                         if let Ok(has_prev_next) =
                             serde_json::from_value::<HasPreviousNextChanged>(payload.clone())
                         {
-                            if debug_mode {
-                                println!(
-                                    "DEBUG: Event [onHasPreviousNextChanged] payload: {}",
-                                    payload_json
-                                );
-                            }
-
                             let _ = sender.send(LoungeEvent::HasPreviousNextChanged(has_prev_next));
                         }
                     }
@@ -944,10 +1109,12 @@ async fn process_event_chunk(
                     _ => {
                         // Unknown event - include payload for debugging
                         let event_with_payload = format!("{} - payload: {}", event_type, payload);
-                        println!(
-                            "DEBUG: Unknown event [{}] payload: {}",
-                            event_type, payload_json
-                        );
+                        if debug_mode {
+                            println!(
+                                "DEBUG: Unknown event [{}] payload: {}",
+                                event_type, payload_json
+                            );
+                        }
                         let _ = sender.send(LoungeEvent::Unknown(event_with_payload));
                     }
                 }
