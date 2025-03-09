@@ -749,7 +749,7 @@ impl LoungeClient {
                 params,
                 player_params,
             } => {
-                // Required parameter
+                // Add video_id (may be empty if using list_id)
                 form_data.push_str(&format!("&req0_videoId={}", video_id));
 
                 // Optional parameters - only add if Some
@@ -807,7 +807,7 @@ impl LoungeClient {
                 video_id,
                 video_sources,
             } => {
-                // Required parameter
+                // Required parameter for AddVideo
                 form_data.push_str(&format!("&req0_videoId={}", video_id));
 
                 // Optional parameter
