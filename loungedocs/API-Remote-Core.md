@@ -1,6 +1,7 @@
 # YouTube Remote API Core
 
 ## Basic Definitions
+
 - **screen**: The TV/device one is trying to cast to
 - **remote**: The device used to control what's being cast to the screen
 - **device**: Screen or remote device
@@ -11,19 +12,22 @@
 ## Authentication
 
 ### Obtaining a Lounge Token
+
 The first step for using the API is getting a lounge token. There are two methods:
 
 1. **Discovery via DIAL protocol** (described in the [Discovery](Discovery.md) page)
 2. **Pairing via a TV code**:
    - In the YouTube app settings, find the "Link with TV code" option
    - Use the 12-digit code in a request:
+
    ```
    POST https://www.youtube.com/api/lounge/pairing/get_screen
    content-type: application/x-www-form-urlencoded
    pairing_code=793868867097
    ```
-   
+
    Response example:
+
    ```json
    {
        "screen": {
@@ -43,6 +47,7 @@ The first step for using the API is getting a lounge token. There are two method
 When pairing with a code, save the response locally for reconnection. The device ID serves as a unique identifier.
 
 ### Refreshing the Lounge Token
+
 Lounge tokens expire periodically. For discoverable devices, rediscover and query the screen. For code-paired screens, use:
 
 ```
@@ -52,6 +57,7 @@ screen_ids=abc,123
 ```
 
 Response:
+
 ```json
 {
     "screens": [
@@ -72,6 +78,7 @@ Response:
 You can batch request lounge tokens by using multiple screen IDs separated by commas.
 
 ## Establishing a Connection
+
 With the lounge token, create a link to the lounge so it recognizes the remote device:
 
 ```
@@ -99,6 +106,7 @@ After this request, you should see "xxx is now connected" (xxx being the device_
 Note: The parameters `capabilities`, `magnaKey`, `ui`, and `theme` are not fully understood but are required for functionality.
 
 ## Maintaining the Session
+
 To track lounge events (what's playing, connections, pauses, ads, etc.), use long HTTP polling. First, establish a session:
 
 ```
@@ -108,7 +116,9 @@ name=devicename&app=app_name&loungeIdToken=loungeToken
 ```
 
 ### Event Format
+
 Events are returned in chunks:
+
 ```
 number
 [[id, ["event_name", event_argument, not sure what]
@@ -116,6 +126,7 @@ number
 ```
 
 Where:
+
 - The first number indicates how many characters are in the following chunk
 - `id` values are auto-incrementing starting from 0
 - `event_name` identifies the event type
@@ -123,6 +134,7 @@ Where:
 - The format is similar to JSONP
 
 The first response contains essential session variables:
+
 ```
 234
 [[0,["c","FEWWEFWEFWEF","",8]]
@@ -135,11 +147,14 @@ The first response contains essential session variables:
 ```
 
 Important variables from this response:
+
 - `SID`: From event "c"
 - `gsession`: From event "S"
 
 ### Continued Event Polling
+
 For subsequent event polling:
+
 ```
 GET https://www.youtube.com/api/lounge/bc/bind?SID=sid&gsessionid=gsession&loungeIdToken=loungeToken&CI=1&TYPE=xmlhttp&AID=???
 ```
@@ -147,12 +162,14 @@ GET https://www.youtube.com/api/lounge/bc/bind?SID=sid&gsessionid=gsession&loung
 The `AID` parameter should be the last known event ID, allowing you to get all events since that ID.
 
 Key state variables to track:
+
 - `SID`: From the first events chunk
 - `gsession`: From the first events chunk
 - `AID`: Last known event ID
 - `loungeToken`: Authentication token
 
 ## Remote Commands
+
 To control the screen (like playing a video):
 
 ```
@@ -173,12 +190,14 @@ req0_prioritizeMobileSenderPlaybackStateOnConnection=true
 All remote commands include the `req0__sc` parameter, which indicates the command type.
 
 Additional state variables for commands:
+
 - `RID`: Remote command ID (auto-incremented for each successful command)
 - `req0_`, `req1_`, etc.: Potentially for batching commands
 
 Note: It's theorized but not confirmed that the `reqX_` format allows batching multiple commands in one request.
 
 ## Disconnecting
+
 To disconnect from the lounge:
 
 ```

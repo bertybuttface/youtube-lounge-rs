@@ -3,7 +3,7 @@
 The **YouTube TV client** is a distinct implementation of YouTube's frontend, optimized for television devices. It uses a different API structure compared to the web and mobile clients and relies heavily on the **Lounge API** for device pairing and remote control functionality.
 
 If you visit:
-https://www.youtube.com/tv
+<https://www.youtube.com/tv>
 
 With your user agent set to:
 “User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:87.0) Gecko/20100101 Cobalt/87.0”

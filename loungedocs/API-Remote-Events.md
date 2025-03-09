@@ -7,6 +7,7 @@ This document details the observed event flow and ID relationships in the YouTub
 ### 1. Initial Connection Sequence
 
 - First, a `playlistModified` event is received with playlist context:
+
 ```json
 {
   "currentIndex": "0",
@@ -17,6 +18,7 @@ This document details the observed event flow and ID relationships in the YouTub
 ```
 
 - Then, a `loungeStatus` event containing connected devices and queueId:
+
 ```json
 {
   "devices": "[{\"app\":\"web\",...,\"name\":\"Rust Lounge Client\",\"id\":\"dn93hla9bmetrmrovfbq191sd3\",\"type\":\"REMOTE_CONTROL\"}]",
@@ -25,6 +27,7 @@ This document details the observed event flow and ID relationships in the YouTub
 ```
 
 - At this point, the system creates a mapping between list_id and device_id:
+
 ```
 DEBUG: Added mapping: list_id RQuKt0IBC5t_IZAGghtcSFlbJNXrk -> device_id dn93hla9bmetrmrovfbq191sd3
 ```
@@ -32,6 +35,7 @@ DEBUG: Added mapping: list_id RQuKt0IBC5t_IZAGghtcSFlbJNXrk -> device_id dn93hla
 ### 2. Playback Start Sequence
 
 - When video playback begins, a `nowPlaying` event is received without a CPN:
+
 ```json
 {
   "currentTime": "0",
@@ -46,6 +50,7 @@ DEBUG: Added mapping: list_id RQuKt0IBC5t_IZAGghtcSFlbJNXrk -> device_id dn93hla
 ```
 
 - Then an `onStateChange` event appears that includes the crucial CPN:
+
 ```json
 {
   "cpn": "0Cxkp2Od9KEyzgdu",
@@ -61,6 +66,7 @@ DEBUG: Added mapping: list_id RQuKt0IBC5t_IZAGghtcSFlbJNXrk -> device_id dn93hla
 - At this point, a PlaybackSession is created, but it's missing the videoId
 
 - Shortly after, a complete `nowPlaying` event arrives with both CPN and video details:
+
 ```json
 {
   "cpn": "0Cxkp2Od9KEyzgdu",
@@ -77,6 +83,7 @@ DEBUG: Added mapping: list_id RQuKt0IBC5t_IZAGghtcSFlbJNXrk -> device_id dn93hla
 ```
 
 - The system updates the session with device information:
+
 ```
 DEBUG: Updating session for CPN 0Cxkp2Od9KEyzgdu with device_id dn93hla9bmetrmrovfbq191sd3 from list_id mapping
 ```
@@ -96,6 +103,7 @@ DEBUG: Updating session for CPN 0Cxkp2Od9KEyzgdu with device_id dn93hla9bmetrmro
 ### 3. Queue ID → Device ID → Session
 
 When a new `nowPlaying` event arrives with a CPN and listId, the system:
+
 - Finds which device is associated with that list/queue
 - Associates that device's ID with the session matching the CPN
 
@@ -111,6 +119,7 @@ When a new `nowPlaying` event arrives with a CPN and listId, the system:
 2. **Device Information**: Not all devices include deviceInfo - remote control devices often have empty deviceInfo_raw strings, which can cause deserialization errors.
 
 3. **ID Relationships**: The most reliable chain is:
+
    ```
    listId (queueId) → device_id → session (identified by CPN)
    ```

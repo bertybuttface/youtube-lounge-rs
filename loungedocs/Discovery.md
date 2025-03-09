@@ -7,7 +7,8 @@ The short answer I found is: [connect-sdk](https://connectsdk.com/en/latest/). D
 
 The one I ended up fiddling with the most was the DIAL protocol - basically the second screen device runs a server which may be used to found more information about the device and the apps within it. For some code:
 
- - send a UDP broadcast in the network "M-SEARCH":
+- send a UDP broadcast in the network "M-SEARCH":
+
 ```
 M-SEARCH * HTTP/1.1
 HOST: 239.255.255.250:1900
@@ -15,7 +16,9 @@ MAN: "ssdp:discover"
 MX: seconds to delay response
 ST: urn:dial-multiscreen-org:service:dial:1 USER-AGENT: OS/version product/version
 ```
- - second screen devices in the network will respond something like:
+
+- second screen devices in the network will respond something like:
+
 ```
 HTTP/1.1 200 OK
 LOCATION: http://192.168.1.1:52235/dd.xml
@@ -25,7 +28,9 @@ BOOTID.UPNP.ORG: 1
 SERVER: OS/version UPnP/1.1 product/version USN: ​​device UUID
 ST: urn:dial-multiscreen-org:service:dial:1 WAKEUP: MAC=10:dd:b1:c9:00:e4;Timeout=10
 ```
- - The important part is the 192.168.x.x:yyyy/dd.xml. By accessing this endpoint, the device will identify itself:
+
+- The important part is the 192.168.x.x:yyyy/dd.xml. By accessing this endpoint, the device will identify itself:
+
 ```
 <root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:r="urn:restful-tv-org:schemas:upnp-dd">
   <specVersion>
@@ -41,8 +46,10 @@ ST: urn:dial-multiscreen-org:service:dial:1 WAKEUP: MAC=10:dd:b1:c9:00:e4;Timeou
   </device>
 </root>
 ```
- - [Intermediate steps not fully documented] There appears to be additional steps between getting the device information and querying for app details. This part of the protocol needs further investigation.
- - Somewhere in the [dial protocol site](http://www.dial-multiscreen.org), the is a spreadsheet that lists all official DIAL supported apps and identifiers that can be used to query second screen devices with http://192.168.x.v:zzzz/apps/{app-identifier}:
+
+- [Intermediate steps not fully documented] There appears to be additional steps between getting the device information and querying for app details. This part of the protocol needs further investigation.
+- Somewhere in the [dial protocol site](http://www.dial-multiscreen.org), the is a spreadsheet that lists all official DIAL supported apps and identifiers that can be used to query second screen devices with <http://192.168.x.v:zzzz/apps/{app-identifier}>:
+
 ```
 <service xmlns="urn:dial-multiscreen-org:schemas:dial">
   <name>YouTube</name>
@@ -60,4 +67,5 @@ ST: urn:dial-multiscreen-org:service:dial:1 WAKEUP: MAC=10:dd:b1:c9:00:e4;Timeou
   </additionalData>
 </service>
 ```
- - keep the `loungeToken` value in mind, because it will be used extensively in the lounge api
+
+- keep the `loungeToken` value in mind, because it will be used extensively in the lounge api

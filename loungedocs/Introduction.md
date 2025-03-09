@@ -1,6 +1,6 @@
 # Introduction to YouTube Lounge API
 
-This documentation was originally forked from https://github.com/enriquecidok/youtube-lounge-api and has been expanded with additional findings.
+This documentation was originally forked from <https://github.com/enriquecidok/youtube-lounge-api> and has been expanded with additional findings.
 
 ## Purpose
 
