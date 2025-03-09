@@ -649,8 +649,8 @@ pub struct AudioTrackChanged {
 // Playlist modified event
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlaylistModified {
-    #[serde(rename = "currentIndex")]
-    pub current_index: String,
+    #[serde(rename = "currentIndex", default)]
+    pub current_index: Option<String>,
     #[serde(rename = "firstVideoId")]
     pub first_video_id: String,
     #[serde(rename = "listId")]
@@ -660,9 +660,11 @@ pub struct PlaylistModified {
 }
 
 impl PlaylistModified {
-    /// Get the current index as an integer
-    pub fn current_index_value(&self) -> i32 {
-        <str as YoutubeValueParser>::parse_int(&self.current_index)
+    /// Get the current index as an integer, returns None if not present
+    pub fn current_index_value(&self) -> Option<i32> {
+        self.current_index
+            .as_ref()
+            .map(|idx| <str as YoutubeValueParser>::parse_int(idx))
     }
 }
 

@@ -25,7 +25,28 @@ pub enum LoungeEvent {
 }
 
 impl LoungeEvent {
-    // Get the name of the event type
+    // Get the name of the event type for logging purposes
+    pub fn name(&self) -> &'static str {
+        match self {
+            LoungeEvent::StateChange(_) => "StateChange",
+            LoungeEvent::NowPlaying(_) => "NowPlaying",
+            LoungeEvent::LoungeStatus(_, _) => "LoungeStatus",
+            LoungeEvent::ScreenDisconnected => "ScreenDisconnected",
+            LoungeEvent::SessionEstablished => "SessionEstablished",
+            LoungeEvent::AdStateChange(_) => "AdStateChange",
+            LoungeEvent::SubtitlesTrackChanged(_) => "SubtitlesTrackChanged",
+            LoungeEvent::AutoplayModeChanged(_) => "AutoplayModeChanged",
+            LoungeEvent::HasPreviousNextChanged(_) => "HasPreviousNextChanged",
+            LoungeEvent::VideoQualityChanged(_) => "VideoQualityChanged",
+            LoungeEvent::AudioTrackChanged(_) => "AudioTrackChanged",
+            LoungeEvent::PlaylistModified(_) => "PlaylistModified",
+            LoungeEvent::AutoplayUpNext(_) => "AutoplayUpNext",
+            LoungeEvent::VolumeChanged(_) => "VolumeChanged",
+            LoungeEvent::Unknown(_) => "Unknown",
+        }
+    }
+
+    // Get the name of the event type (YouTube API event name)
     pub fn event_type(&self) -> &'static str {
         match self {
             LoungeEvent::StateChange(_) => "onStateChange",

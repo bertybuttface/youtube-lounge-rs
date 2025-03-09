@@ -28,7 +28,7 @@ static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| {
         .timeout(Duration::from_secs(STANDARD_REQUEST_TIMEOUT))
         .pool_idle_timeout(Some(Duration::from_secs(POOL_IDLE_TIMEOUT)))
         .build()
-        .unwrap()
+        .expect("Failed to create shared HTTP client")
 });
 
 // Create a separate client for long polling with a timeout slightly longer than the heartbeat interval
@@ -38,7 +38,7 @@ static LONG_POLL_CLIENT: Lazy<Client> = Lazy::new(|| {
         .timeout(Duration::from_secs(LONG_POLL_TIMEOUT))
         .pool_idle_timeout(Some(Duration::from_secs(POOL_IDLE_TIMEOUT)))
         .build()
-        .unwrap()
+        .expect("Failed to create long poll HTTP client")
 });
 
 /// Helper struct to handle HTTP responses and common error cases
@@ -59,10 +59,12 @@ impl<'a> HttpResponseHandler<'a> {
         }
     }
 
-    /// Helper method to send events - discards send errors
+    /// Helper method to send events - logs send errors
     #[inline]
     fn send_event(&self, event: LoungeEvent) {
-        let _ = self.event_sender.send(event);
+        if let Err(err) = self.event_sender.send(event.clone()) {
+            eprintln!("Failed to broadcast {} event: {}", event.name(), err);
+        }
     }
 
     /// Handle standard YouTube API error status codes
@@ -77,7 +79,10 @@ impl<'a> HttpResponseHandler<'a> {
 
         // For specific errors, mark as disconnected and notify
         if let Some(error) = specific_error {
-            *self.connected.lock().unwrap() = false;
+            match self.connected.lock() {
+                Ok(mut lock) => *lock = false,
+                Err(err) => eprintln!("Mutex poisoned when updating connected state: {:?}", err),
+            }
             self.send_event(LoungeEvent::ScreenDisconnected);
             return Some(error);
         }
@@ -211,16 +216,24 @@ impl LoungeClient {
 
     /// Enable debug mode to get raw JSON payloads with events
     pub fn enable_debug_mode(&mut self) {
-        let mut state = self.session_state.lock().unwrap();
-        state.debug_mode = true;
-        self.session_manager.enable_debug_mode();
+        match self.session_state.lock() {
+            Ok(mut state) => {
+                state.debug_mode = true;
+                self.session_manager.enable_debug_mode();
+            }
+            Err(err) => eprintln!("Failed to enable debug mode - mutex poisoned: {:?}", err),
+        }
     }
 
     /// Disable debug mode
     pub fn disable_debug_mode(&mut self) {
-        let mut state = self.session_state.lock().unwrap();
-        state.debug_mode = false;
-        self.session_manager.disable_debug_mode();
+        match self.session_state.lock() {
+            Ok(mut state) => {
+                state.debug_mode = false;
+                self.session_manager.disable_debug_mode();
+            }
+            Err(err) => eprintln!("Failed to disable debug mode - mutex poisoned: {:?}", err),
+        }
     }
 
     /// Internal method to refresh the token
@@ -398,12 +411,22 @@ impl LoungeClient {
     pub async fn connect(&self) -> Result<(), LoungeError> {
         // Reset session state before making any async calls
         {
-            let mut session_state = self.session_state.lock().unwrap();
-            session_state.rid = 1;
-            session_state.command_offset = 0;
-            session_state.sid = None;
-            session_state.gsessionid = None;
-            session_state.aid = None;
+            let session_state = self.session_state.lock();
+            match session_state {
+                Ok(mut state) => {
+                    state.rid = 1;
+                    state.command_offset = 0;
+                    state.sid = None;
+                    state.gsessionid = None;
+                    state.aid = None;
+                }
+                Err(err) => {
+                    return Err(LoungeError::MutexPoisoned(format!(
+                        "Failed to reset session state: {:?}",
+                        err
+                    )))
+                }
+            }
         } // Lock is released here
 
         let params = [
@@ -439,15 +462,31 @@ impl LoungeClient {
 
         // Update session state with the IDs we obtained
         {
-            let mut state = self.session_state.lock().unwrap();
-            state.sid = sid;
-            state.gsessionid = gsessionid;
+            match self.session_state.lock() {
+                Ok(mut state) => {
+                    state.sid = sid;
+                    state.gsessionid = gsessionid;
+                }
+                Err(err) => {
+                    return Err(LoungeError::MutexPoisoned(format!(
+                        "Failed to update session IDs: {:?}",
+                        err
+                    )))
+                }
+            }
         } // Lock is released here
 
         // Set connected flag
         {
-            let mut connected = self.connected.lock().unwrap();
-            *connected = true;
+            match self.connected.lock() {
+                Ok(mut connected) => *connected = true,
+                Err(err) => {
+                    return Err(LoungeError::MutexPoisoned(format!(
+                        "Failed to update connected state: {:?}",
+                        err
+                    )))
+                }
+            }
         } // Lock is released here
 
         // Send session established event
@@ -473,10 +512,13 @@ impl LoungeClient {
 
         task::spawn(async move {
             loop {
-                // Break the loop if no longer connected
-                let is_connected = {
-                    let lock = connected.lock().unwrap();
-                    *lock
+                // Break the loop if no longer connected or if mutex is poisoned
+                let is_connected = match connected.lock() {
+                    Ok(lock) => *lock,
+                    Err(err) => {
+                        eprintln!("Mutex poisoned in event loop: {:?}", err);
+                        break; // Exit loop on mutex poisoning
+                    }
                 };
 
                 if !is_connected {
@@ -484,25 +526,42 @@ impl LoungeClient {
                 }
 
                 // Get session information and clone it before the await point
-                let (sid, gsessionid, aid) = {
-                    let state = session_state.lock().unwrap();
+                let (sid, gsessionid, aid) = match session_state.lock() {
+                    Ok(state) => {
+                        // Check if the session is valid
+                        if !state.is_valid() {
+                            // Need to reconnect
+                            drop(state); // explicitly release the lock
+                            if let Err(err) = connected.lock().map(|mut c| *c = false) {
+                                eprintln!("Failed to update connected state: {:?}", err);
+                            }
+                            break;
+                        }
 
-                    // Check if the session is valid
-                    if !state.is_valid() {
-                        // Need to reconnect
-                        drop(state); // explicitly release the lock
-                        *connected.lock().unwrap() = false;
+                        // Get the session info
+                        state.get_session_info()
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to access session state in event loop: {:?}", err);
+                        // Mark as disconnected
+                        if let Err(lock_err) = connected.lock().map(|mut c| *c = false) {
+                            eprintln!("Failed to update connected state: {:?}", lock_err);
+                        }
                         break;
                     }
-
-                    // Get the session info
-                    state.get_session_info()
                 };
 
-                // Avoid unnecessary cloning by using static strings where possible
-                // and reusing the unwrapped values
-                let sid_value = sid.unwrap();
-                let gsession_value = gsessionid.unwrap();
+                // Get the values from Options, but ensure they're valid
+                let (sid_value, gsession_value) = match (sid, gsessionid) {
+                    (Some(s), Some(g)) => (s, g),
+                    _ => {
+                        eprintln!("Missing session IDs in event loop");
+                        if let Err(err) = connected.lock().map(|mut c| *c = false) {
+                            eprintln!("Failed to update connected state: {:?}", err);
+                        }
+                        break;
+                    }
+                };
 
                 let mut params = HashMap::new();
                 params.insert("name", device_name.as_str());
@@ -593,7 +652,12 @@ impl LoungeClient {
             }
 
             // Function ended, client is disconnected
-            *connected.lock().unwrap() = false;
+            if let Err(err) = connected.lock().map(|mut c| *c = false) {
+                eprintln!(
+                    "Failed to update connected state at end of event loop: {:?}",
+                    err
+                );
+            }
         });
 
         Ok(())
@@ -617,29 +681,48 @@ impl LoungeClient {
     /// Check connection state and session validity
     fn check_session_state(&self) -> Result<(String, String, i32, i32), LoungeError> {
         // Check if we're connected
-        if !*self.connected.lock().unwrap() {
+        let is_connected = match self.connected.lock() {
+            Ok(connected) => *connected,
+            Err(err) => {
+                return Err(LoungeError::MutexPoisoned(format!(
+                    "Failed to check connected state: {:?}",
+                    err
+                )))
+            }
+        };
+
+        if !is_connected {
             return Err(LoungeError::ConnectionClosed);
         }
 
         // Get the session state values we need
-        let (sid, gsessionid, rid, ofs) = {
-            let mut state = self.session_state.lock().unwrap();
+        let (sid, gsessionid, rid, ofs) = match self.session_state.lock() {
+            Ok(mut state) => {
+                // Check if the session is valid
+                if !state.is_valid() {
+                    return Err(LoungeError::SessionExpired);
+                }
 
-            // Check if the session is valid
-            if !state.is_valid() {
-                return Err(LoungeError::SessionExpired);
+                // Get the values we need
+                let (sid, gsessionid, _) = state.get_session_info();
+                let rid = state.increment_rid();
+                let ofs = state.increment_offset();
+
+                (sid, gsessionid, rid, ofs)
             }
-
-            // Get the values we need
-            let (sid, gsessionid, _) = state.get_session_info();
-            let rid = state.increment_rid();
-            let ofs = state.increment_offset();
-
-            (sid, gsessionid, rid, ofs)
+            Err(err) => {
+                return Err(LoungeError::MutexPoisoned(format!(
+                    "Failed to access session state: {:?}",
+                    err
+                )))
+            }
         };
 
         // Convert to non-optional types now that we know they're valid
-        Ok((sid.unwrap(), gsessionid.unwrap(), rid, ofs))
+        match (sid, gsessionid) {
+            (Some(s), Some(g)) => Ok((s, g, rid, ofs)),
+            _ => Err(LoungeError::SessionExpired),
+        }
     }
 
     /// Send a command to the screen
@@ -710,7 +793,18 @@ impl LoungeClient {
     /// Disconnect from the screen
     pub async fn disconnect(&self) -> Result<(), LoungeError> {
         // Only try to disconnect if connected
-        if !*self.connected.lock().unwrap() {
+        let is_connected = match self.connected.lock() {
+            Ok(connected) => *connected,
+            Err(err) => {
+                eprintln!(
+                    "Failed to check connected state during disconnect: {:?}",
+                    err
+                );
+                return Ok(()); // Assume not connected if mutex is poisoned
+            }
+        };
+
+        if !is_connected {
             return Ok(());
         }
 
@@ -738,7 +832,16 @@ impl LoungeClient {
             .await;
 
         // Set connected to false
-        *self.connected.lock().unwrap() = false;
+        if let Err(err) = self
+            .connected
+            .lock()
+            .map(|mut connected| *connected = false)
+        {
+            eprintln!(
+                "Failed to update connected state during disconnect: {:?}",
+                err
+            );
+        }
 
         Ok(())
     }
@@ -949,9 +1052,12 @@ impl<'a> EventPipeline<'a> {
         session_manager: &'a PlaybackSessionManager,
     ) -> Self {
         // Get debug mode setting from session state
-        let debug_mode = {
-            let state = session_state.lock().unwrap();
-            state.debug_mode
+        let debug_mode = match session_state.lock() {
+            Ok(state) => state.debug_mode,
+            Err(err) => {
+                eprintln!("Failed to get debug mode setting: {:?}", err);
+                false // Default to false if mutex is poisoned
+            }
         };
 
         Self {
@@ -962,10 +1068,13 @@ impl<'a> EventPipeline<'a> {
         }
     }
 
-    /// Helper method to send events - discards send errors
+    /// Helper method to send events - logs send errors instead of discarding them
     #[inline]
     fn send_event(&self, event: LoungeEvent) {
-        let _ = self.sender.send(event);
+        if let Err(err) = self.sender.send(event.clone()) {
+            // Use an appropriate log level based on the event's importance
+            eprintln!("Failed to broadcast event {}: {}", event.name(), err);
+        }
     }
 
     /// Process an event chunk received from the YouTube API
@@ -977,10 +1086,13 @@ impl<'a> EventPipeline<'a> {
         // Parse the JSON chunk
         let json_result = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(chunk);
 
-        // Return early if JSON parsing fails
+        // Log the error and return early if JSON parsing fails
         let events = match json_result {
             Ok(data) => data,
-            Err(_) => return,
+            Err(err) => {
+                eprintln!("Failed to parse event chunk: {} - Raw JSON: {}", err, chunk);
+                return;
+            }
         };
 
         // Process each event in the chunk
@@ -998,8 +1110,14 @@ impl<'a> EventPipeline<'a> {
         // Extract and update the event ID (AID)
         if let Some(event_id) = event.first().and_then(|id| id.as_i64()) {
             // Update the session state with the event ID
-            let mut state = self.session_state.lock().unwrap();
-            state.aid = Some(event_id.to_string());
+            match self.session_state.lock() {
+                Ok(mut state) => {
+                    state.aid = Some(event_id.to_string());
+                }
+                Err(err) => {
+                    eprintln!("Failed to update AID in session state: {:?}", err);
+                }
+            }
         }
 
         // Process the event data if it has the right structure
@@ -1017,14 +1135,25 @@ impl<'a> EventPipeline<'a> {
         }
     }
 
-    /// Process standard events with a simple parsing pattern
+    /// Process standard events with a simple parsing pattern and proper error logging
     fn process_simple_event<T, F>(&self, payload: &serde_json::Value, event_creator: F)
     where
         T: serde::de::DeserializeOwned,
         F: FnOnce(T) -> LoungeEvent,
+        T: std::fmt::Debug, // Allow for debugging
     {
-        if let Ok(data) = serde_json::from_value::<T>(payload.clone()) {
-            self.send_event(event_creator(data));
+        match serde_json::from_value::<T>(payload.clone()) {
+            Ok(data) => {
+                self.send_event(event_creator(data));
+            }
+            Err(err) => {
+                eprintln!(
+                    "Failed to deserialize {} event: {} - Payload: {}",
+                    std::any::type_name::<T>(),
+                    err,
+                    payload
+                );
+            }
         }
     }
 
@@ -1103,67 +1232,115 @@ impl<'a> EventPipeline<'a> {
         }
     }
 
-    /// Process a state change event
+    /// Process a state change event with proper error handling
     fn process_state_change(&self, payload: &serde_json::Value) {
-        if let Ok(state) = serde_json::from_value::<PlaybackState>(payload.clone()) {
-            // Use the session manager to process state change
-            if state.cpn.is_some() {
-                // Update existing session or create a new one
-                self.session_manager.process_state_change(&state);
-            }
+        match serde_json::from_value::<PlaybackState>(payload.clone()) {
+            Ok(state) => {
+                // Use the session manager to process state change
+                if state.cpn.is_some() {
+                    // Update existing session or create a new one
+                    self.session_manager.process_state_change(&state);
+                }
 
-            self.send_event(LoungeEvent::StateChange(state));
+                self.send_event(LoungeEvent::StateChange(state));
+            }
+            Err(err) => {
+                eprintln!(
+                    "Failed to deserialize StateChange event: {} - Payload: {}",
+                    err, payload
+                );
+            }
         }
     }
 
-    /// Process a now playing event
+    /// Process a now playing event with proper error handling
     fn process_now_playing(&self, payload: &serde_json::Value) {
-        if let Ok(mut now_playing) = serde_json::from_value::<NowPlaying>(payload.clone()) {
-            // Ensure video_data fields are populated
-            now_playing.video_data = VideoData {
-                video_id: now_playing.video_id.clone(),
-                author: "".to_string(),
-                title: "".to_string(),
-                is_playable: true,
-            };
+        match serde_json::from_value::<NowPlaying>(payload.clone()) {
+            Ok(mut now_playing) => {
+                // Ensure video_data fields are populated
+                now_playing.video_data = VideoData {
+                    video_id: now_playing.video_id.clone(),
+                    author: "".to_string(),
+                    title: "".to_string(),
+                    is_playable: true,
+                };
 
-            // Use the session manager to process the now playing event
-            if now_playing.cpn.is_some() {
-                self.session_manager.process_now_playing(&now_playing);
+                // Use the session manager to process the now playing event
+                if now_playing.cpn.is_some() {
+                    self.session_manager.process_now_playing(&now_playing);
+                }
+
+                self.send_event(LoungeEvent::NowPlaying(now_playing));
             }
-
-            self.send_event(LoungeEvent::NowPlaying(now_playing));
+            Err(err) => {
+                eprintln!(
+                    "Failed to deserialize NowPlaying event: {} - Payload: {}",
+                    err, payload
+                );
+            }
         }
     }
 
-    /// Process a lounge status event which contains device information
+    /// Process a lounge status event with proper error handling for all deserialization steps
     fn process_lounge_status(&self, payload: &serde_json::Value) {
-        if let Ok(status) = serde_json::from_value::<LoungeStatus>(payload.clone()) {
-            // Parse nested JSON - try to avoid unnecessary string conversions
-            let devices_result = serde_json::from_str::<Vec<Device>>(&status.devices);
+        // First, try to parse the main LoungeStatus
+        match serde_json::from_value::<LoungeStatus>(payload.clone()) {
+            Ok(status) => {
+                // Now try to parse the nested devices JSON
+                match serde_json::from_str::<Vec<Device>>(&status.devices) {
+                    Ok(devices) => {
+                        // Process device info with error handling
+                        let devices_with_info: Vec<Device> = devices
+                            .into_iter()
+                            .map(|mut device| {
+                                match serde_json::from_str::<DeviceInfo>(&device.device_info_raw) {
+                                    Ok(info) => {
+                                        device.device_info = Some(info);
+                                    },
+                                    Err(err) => {
+                                        eprintln!(
+                                            "Failed to deserialize DeviceInfo for device {}: {} - Raw: '{}'", 
+                                            device.id,
+                                            err,
+                                            device.device_info_raw
+                                        );
+                                        // Still proceed with the device, even without device_info
+                                    }
+                                }
+                                device
+                            })
+                            .collect();
 
-            if let Ok(devices) = devices_result {
-                // Process device info efficiently
-                let devices_with_info: Vec<Device> = devices
-                    .into_iter()
-                    .map(|mut device| {
-                        if let Ok(info) =
-                            serde_json::from_str::<DeviceInfo>(&device.device_info_raw)
-                        {
-                            device.device_info = Some(info);
-                        }
-                        device
-                    })
-                    .collect();
+                        // Use the session manager to process device list
+                        self.session_manager
+                            .process_device_list(&devices_with_info, status.queue_id.as_ref());
 
-                // Use the session manager to process device list
-                self.session_manager
-                    .process_device_list(&devices_with_info, status.queue_id.as_ref());
+                        self.send_event(LoungeEvent::LoungeStatus(
+                            devices_with_info,
+                            status.queue_id.clone(),
+                        ));
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "Failed to deserialize devices list: {} - Raw devices: {}",
+                            err, status.devices
+                        );
 
-                self.send_event(LoungeEvent::LoungeStatus(
-                    devices_with_info,
-                    status.queue_id.clone(),
-                ));
+                        // Still fire the event with an empty device list to maintain connection
+                        self.session_manager
+                            .process_device_list(&[], status.queue_id.as_ref());
+                        self.send_event(LoungeEvent::LoungeStatus(
+                            vec![], // Empty device list
+                            status.queue_id.clone(),
+                        ));
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!(
+                    "Failed to deserialize LoungeStatus event: {} - Payload: {}",
+                    err, payload
+                );
             }
         }
     }
