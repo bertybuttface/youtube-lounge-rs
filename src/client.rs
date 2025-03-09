@@ -740,8 +740,80 @@ impl LoungeClient {
 
         // Add command-specific parameters efficiently
         match &command {
-            PlaybackCommand::SetPlaylist { video_id } => {
+            PlaybackCommand::SetPlaylist {
+                video_id,
+                current_index,
+                list_id,
+                current_time,
+                audio_only,
+                params,
+                player_params,
+            } => {
+                // Required parameter
                 form_data.push_str(&format!("&req0_videoId={}", video_id));
+
+                // Optional parameters - only add if Some
+                if let Some(idx) = current_index {
+                    form_data.push_str(&format!("&req0_currentIndex={}", idx));
+                } else {
+                    // Default to -1 as per the Lounge API documentation
+                    form_data.push_str("&req0_currentIndex=-1");
+                }
+
+                // Add list_id if provided
+                if let Some(list) = list_id {
+                    form_data.push_str(&format!("&req0_listId={}", list));
+                } else {
+                    // Empty listId as per documentation
+                    form_data.push_str("&req0_listId=");
+                }
+
+                // Add current_time if provided
+                if let Some(time) = current_time {
+                    form_data.push_str(&format!("&req0_currentTime={}", time));
+                } else {
+                    // Default to 0 as per documentation
+                    form_data.push_str("&req0_currentTime=0");
+                }
+
+                // Add audio_only if provided
+                if let Some(audio) = audio_only {
+                    form_data.push_str(&format!("&req0_audioOnly={}", audio));
+                } else {
+                    // Default to false as per documentation
+                    form_data.push_str("&req0_audioOnly=false");
+                }
+
+                // Add params if provided
+                if let Some(p) = params {
+                    form_data.push_str(&format!("&req0_params={}", p));
+                } else {
+                    // Empty params as per documentation
+                    form_data.push_str("&req0_params=");
+                }
+
+                // Add player_params if provided
+                if let Some(pp) = player_params {
+                    form_data.push_str(&format!("&req0_playerParams={}", pp));
+                } else {
+                    // Empty playerParams as per documentation
+                    form_data.push_str("&req0_playerParams=");
+                }
+
+                // Add recommended param from documentation
+                form_data.push_str("&req0_prioritizeMobileSenderPlaybackStateOnConnection=true");
+            }
+            PlaybackCommand::AddVideo {
+                video_id,
+                video_sources,
+            } => {
+                // Required parameter
+                form_data.push_str(&format!("&req0_videoId={}", video_id));
+
+                // Optional parameter
+                if let Some(sources) = video_sources {
+                    form_data.push_str(&format!("&req0_videoSources={}", sources));
+                }
             }
             PlaybackCommand::SeekTo { new_time } => {
                 form_data.push_str(&format!("&req0_newTime={}", new_time));
@@ -856,7 +928,8 @@ impl LoungeClient {
             ("app", "web"),
             ("mdx-version", "3"),
             ("name", &encoded_name),
-            ("id", &self.screen_id),
+            // Per API docs, id should be empty for initial connection, not the screen_id
+            ("id", ""),
             ("device", "REMOTE_CONTROL"),
             ("capabilities", "que,dsdtr,atp"),
             ("method", "setPlaylist"),

@@ -38,9 +38,22 @@ async fn test_command_names() {
     // Test commands with parameters
     assert_eq!(
         get_command_name(&PlaybackCommand::SetPlaylist {
-            video_id: "dQw4w9WgXcQ".to_string()
+            video_id: "dQw4w9WgXcQ".to_string(),
+            current_index: Some(-1),
+            list_id: None,
+            current_time: Some(0.0),
+            audio_only: Some(false),
+            params: None,
+            player_params: None,
         }),
         "setPlaylist"
+    );
+    assert_eq!(
+        get_command_name(&PlaybackCommand::AddVideo {
+            video_id: "dQw4w9WgXcQ".to_string(),
+            video_sources: None,
+        }),
+        "addVideo"
     );
     assert_eq!(
         get_command_name(&PlaybackCommand::SeekTo { new_time: 42.0 }),
@@ -101,6 +114,51 @@ async fn test_event_receiver() {
             }
         }
         Err(_) => panic!("Did not receive event"),
+    }
+}
+
+// Test helper constructor methods for commands
+#[tokio::test]
+async fn test_command_constructors() {
+    use youtube_lounge_rs::PlaybackCommand;
+
+    // Test the set_playlist helper
+    let video_id = "dQw4w9WgXcQ".to_string();
+    let set_playlist = PlaybackCommand::set_playlist(video_id.clone());
+
+    match set_playlist {
+        PlaybackCommand::SetPlaylist {
+            video_id: vid,
+            current_index,
+            list_id,
+            current_time,
+            audio_only,
+            params,
+            player_params,
+        } => {
+            assert_eq!(vid, video_id);
+            assert_eq!(current_index, Some(-1));
+            assert_eq!(list_id, None);
+            assert_eq!(current_time, Some(0.0));
+            assert_eq!(audio_only, Some(false));
+            assert_eq!(params, None);
+            assert_eq!(player_params, None);
+        }
+        _ => panic!("Wrong command type returned by set_playlist"),
+    }
+
+    // Test the add_video helper
+    let add_video = PlaybackCommand::add_video(video_id.clone());
+
+    match add_video {
+        PlaybackCommand::AddVideo {
+            video_id: vid,
+            video_sources,
+        } => {
+            assert_eq!(vid, video_id);
+            assert_eq!(video_sources, None);
+        }
+        _ => panic!("Wrong command type returned by add_video"),
     }
 }
 

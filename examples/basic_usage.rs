@@ -104,9 +104,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Play a specific video
     println!("Starting a video...");
     client
-        .send_command_with_refresh(PlaybackCommand::SetPlaylist {
-            video_id: "dQw4w9WgXcQ".to_string(), // Rick Astley - Never Gonna Give You Up
-        })
+        .send_command_with_refresh(
+            PlaybackCommand::set_playlist("dQw4w9WgXcQ".to_string()), // Rick Astley
+        )
         .await?;
 
     // Wait for the video to start
