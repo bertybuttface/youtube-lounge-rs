@@ -129,7 +129,7 @@ fn test_lounge_event_variants() {
 
     // Test PlaylistModified
     let playlist = PlaylistModified {
-        current_index: "0".to_string(),
+        current_index: Some("0".to_string()),
         first_video_id: "dQw4w9WgXcQ".to_string(),
         list_id: "RQdkpuO9KNHXPCTY5ouk6z1Yjc3sQ".to_string(),
         video_id: "dQw4w9WgXcQ".to_string(),
@@ -220,7 +220,7 @@ fn test_lounge_event_matching() {
             video_id: "".to_string(),
         }),
         LoungeEvent::PlaylistModified(PlaylistModified {
-            current_index: "".to_string(),
+            current_index: Some("".to_string()),
             first_video_id: "".to_string(),
             list_id: "".to_string(),
             video_id: "".to_string(),

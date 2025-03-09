@@ -386,7 +386,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         LoungeEvent::PlaylistModified(playlist) => {
                             println!("Playlist modified:");
-                            println!("  Current index: {}", playlist.current_index);
+                            println!("  Current index: {:?}", playlist.current_index);
                             println!("  First video ID: {}", playlist.first_video_id);
                             println!("  List ID: {}", playlist.list_id);
                             println!("  Video ID: {}", playlist.video_id);

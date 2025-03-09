@@ -13,7 +13,11 @@ fn test_lounge_error_display() {
 
     // Test ParseError
     let parse_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
-    let err = LoungeError::ParseError(parse_err);
+    let err = LoungeError::ParseError {
+        error: parse_err,
+        context: "test context".to_string(),
+        payload: "invalid json".to_string(),
+    };
     assert!(format!("{}", err).contains("Parse error"));
 
     // Test InvalidResponse
@@ -65,7 +69,7 @@ fn test_lounge_error_conversions() {
     let parse_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
     let err: LoungeError = parse_err.into();
     match err {
-        LoungeError::ParseError(_) => {} // Success
+        LoungeError::ParseError { .. } => {} // Success
         _ => panic!("Expected ParseError variant"),
     }
 
