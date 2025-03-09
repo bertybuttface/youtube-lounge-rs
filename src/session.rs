@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
+use crate::debug_log;
 use crate::models::{Device, NowPlaying, PlaybackSession, PlaybackState};
 use crate::utils::state::PlaybackStatus;
 
@@ -33,6 +34,12 @@ impl PlaybackSessionManager {
             session_sender: session_tx,
             debug_mode: Arc::new(Mutex::new(false)),
         }
+    }
+
+    /// Helper method to send session updates - discards send errors
+    #[inline]
+    fn send_session(&self, session: PlaybackSession) {
+        let _ = self.session_sender.send(session);
     }
 
     /// Get a channel for receiving session updates
@@ -74,7 +81,7 @@ impl PlaybackSessionManager {
             self.update_list_id_mapping(event);
 
             // Broadcast the session update
-            let _ = self.session_sender.send(session_clone.clone());
+            self.send_session(session_clone.clone());
 
             // Return the created session
             return Some(session_clone);
@@ -107,7 +114,7 @@ impl PlaybackSessionManager {
 
         // Send update if session was modified or created
         if let Some(ref session) = updated_session {
-            let _ = self.session_sender.send(session.clone());
+            self.send_session(session.clone());
         }
 
         updated_session
@@ -116,13 +123,12 @@ impl PlaybackSessionManager {
     /// Process a device list and map device IDs to sessions
     pub fn process_device_list(&self, devices: &[Device], queue_id: Option<&String>) {
         if let Some(queue_id) = queue_id {
-            if self.is_debug_mode() {
-                println!(
-                    "DEBUG: Processing device list with queue_id {} and {} devices",
-                    queue_id,
-                    devices.len()
-                );
-            }
+            debug_log!(
+                self.is_debug_mode(),
+                "Processing device list with queue_id {} and {} devices",
+                queue_id,
+                devices.len()
+            );
 
             // Find our REMOTE_CONTROL device
             let remote_device = devices.iter().find(|d| d.device_type == "REMOTE_CONTROL");
@@ -130,24 +136,24 @@ impl PlaybackSessionManager {
             if let Some(remote_device) = remote_device {
                 let device_id = remote_device.id.clone();
 
-                if self.is_debug_mode() {
-                    println!(
-                        "DEBUG: Mapping device_id {} to queue_id {}",
-                        device_id, queue_id
-                    );
-                }
+                debug_log!(
+                    self.is_debug_mode(),
+                    "Mapping device_id {} to queue_id {}",
+                    device_id,
+                    queue_id
+                );
 
                 // Update the 1:1 mapping
                 {
                     let mut list_map = self.list_id_to_device.lock().unwrap();
                     list_map.insert(queue_id.clone(), device_id.clone());
 
-                    if self.is_debug_mode() {
-                        println!(
-                            "DEBUG: Added mapping: list_id {} -> device_id {}",
-                            queue_id, device_id
-                        );
-                    }
+                    debug_log!(
+                        self.is_debug_mode(),
+                        "Added mapping: list_id {} -> device_id {}",
+                        queue_id,
+                        device_id
+                    );
                 }
 
                 // Update device_id field for any sessions with matching list_id
@@ -157,12 +163,12 @@ impl PlaybackSessionManager {
 
                     for session in sessions.values_mut() {
                         if session.list_id.as_deref() == Some(queue_id) {
-                            if self.is_debug_mode() {
-                                println!(
-                                    "DEBUG: Updating session for CPN {} with device_id {}",
-                                    session.cpn, device_id
-                                );
-                            }
+                            debug_log!(
+                                self.is_debug_mode(),
+                                "Updating session for CPN {} with device_id {}",
+                                session.cpn,
+                                device_id
+                            );
 
                             if session.device_id != Some(device_id.clone()) {
                                 session.device_id = Some(device_id.clone());
@@ -176,7 +182,7 @@ impl PlaybackSessionManager {
 
                     // Send updates for any modified sessions
                     for session in updated_sessions {
-                        let _ = self.session_sender.send(session);
+                        self.send_session(session);
                     }
                 }
             }
@@ -197,10 +203,12 @@ impl PlaybackSessionManager {
                 if let Some(device_id) = device_id {
                     let mut sessions = self.active_sessions.lock().unwrap();
                     if let Some(session) = sessions.get_mut(cpn) {
-                        if self.is_debug_mode() {
-                            println!("DEBUG: Updating session for CPN {} with device_id {} from list_id mapping", 
-                                     cpn, device_id);
-                        }
+                        debug_log!(
+                            self.is_debug_mode(),
+                            "Updating session for CPN {} with device_id {} from list_id mapping",
+                            cpn,
+                            device_id
+                        );
                         session.device_id = Some(device_id);
                     }
                 }

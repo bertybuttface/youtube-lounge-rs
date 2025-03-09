@@ -12,6 +12,9 @@ use tokio::sync::broadcast;
 use tokio::task;
 use tokio::time::sleep;
 
+// Import the debug_log macro from our utils module
+use crate::debug_log;
+
 // Create a static shared HTTP client for better connection pooling and DNS caching
 static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| {
     ClientBuilder::new()
@@ -49,36 +52,48 @@ impl<'a> HttpResponseHandler<'a> {
         }
     }
 
+    /// Helper method to send events - discards send errors
+    #[inline]
+    fn send_event(&self, event: LoungeEvent) {
+        let _ = self.event_sender.send(event);
+    }
+
     /// Handle standard YouTube API error status codes
     fn handle_error_status(&self, status: u16) -> Option<LoungeError> {
-        match status {
+        // Create a match statement instead of a map since LoungeError doesn't implement Clone
+        let error = match status {
             400 => {
-                // Session expired
                 *self.connected.lock().unwrap() = false;
-                let _ = self.event_sender.send(LoungeEvent::ScreenDisconnected);
+                self.send_event(LoungeEvent::ScreenDisconnected);
                 Some(LoungeError::SessionExpired)
             }
             401 => {
-                // Token expired
                 *self.connected.lock().unwrap() = false;
-                let _ = self.event_sender.send(LoungeEvent::ScreenDisconnected);
+                self.send_event(LoungeEvent::ScreenDisconnected);
                 Some(LoungeError::TokenExpired)
             }
             410 => {
-                // Session gone
                 *self.connected.lock().unwrap() = false;
-                let _ = self.event_sender.send(LoungeEvent::ScreenDisconnected);
+                self.send_event(LoungeEvent::ScreenDisconnected);
                 Some(LoungeError::ConnectionClosed)
             }
-            _ if status >= 400 => {
-                // Other error
-                Some(LoungeError::InvalidResponse(format!(
-                    "HTTP error status: {}",
-                    status
-                )))
-            }
-            _ => None, // No error for successful status codes
+            _ => None,
+        };
+
+        // Return the error if we found one, or check for generic error condition
+        if error.is_some() {
+            return error;
         }
+
+        // Handle other error statuses
+        if status >= 400 {
+            return Some(LoungeError::InvalidResponse(format!(
+                "HTTP error status: {}",
+                status
+            )));
+        }
+
+        None // No error for successful status codes
     }
 
     /// Process a response and return an error if the status code indicates an error
@@ -494,7 +509,8 @@ impl LoungeClient {
         } // Lock is released here
 
         // Send session established event
-        let _ = self.event_sender.send(LoungeEvent::SessionEstablished);
+        let handler = HttpResponseHandler::new(&self.connected, &self.event_sender);
+        handler.send_event(LoungeEvent::SessionEstablished);
 
         // Start the event subscription loop
         self.subscribe_to_events().await?;
@@ -898,6 +914,12 @@ impl<'a> EventPipeline<'a> {
         }
     }
 
+    /// Helper method to send events - discards send errors
+    #[inline]
+    fn send_event(&self, event: LoungeEvent) {
+        let _ = self.sender.send(event);
+    }
+
     /// Process an event chunk received from the YouTube API
     fn process_event_chunk(&self, chunk: &str) {
         if chunk.trim().is_empty() {
@@ -954,16 +976,18 @@ impl<'a> EventPipeline<'a> {
         F: FnOnce(T) -> LoungeEvent,
     {
         if let Ok(data) = serde_json::from_value::<T>(payload.clone()) {
-            let _ = self.sender.send(event_creator(data));
+            self.send_event(event_creator(data));
         }
     }
 
     /// Handle the event with the appropriate handler based on event type
     fn handle_event(&self, event_type: &str, payload: &serde_json::Value) {
-        // Debugging if needed
-        if self.debug_mode {
-            println!("DEBUG: Event [{}] payload: {}", event_type, payload);
-        }
+        debug_log!(
+            self.debug_mode,
+            "Event [{}] payload: {}",
+            event_type,
+            payload
+        );
 
         match event_type {
             // Complex events with session state updates
@@ -972,9 +996,7 @@ impl<'a> EventPipeline<'a> {
             "loungeStatus" => self.process_lounge_status(payload),
 
             // Simple notification events
-            "loungeScreenDisconnected" => {
-                let _ = self.sender.send(LoungeEvent::ScreenDisconnected);
-            }
+            "loungeScreenDisconnected" => self.send_event(LoungeEvent::ScreenDisconnected),
 
             // Simple events that follow the same pattern - grouped by category
 
@@ -1022,10 +1044,13 @@ impl<'a> EventPipeline<'a> {
             // Unknown events
             _ => {
                 let event_with_payload = format!("{} - payload: {}", event_type, payload);
-                if self.debug_mode {
-                    println!("DEBUG: Unknown event [{}] payload: {}", event_type, payload);
-                }
-                let _ = self.sender.send(LoungeEvent::Unknown(event_with_payload));
+                debug_log!(
+                    self.debug_mode,
+                    "Unknown event [{}] payload: {}",
+                    event_type,
+                    payload
+                );
+                self.send_event(LoungeEvent::Unknown(event_with_payload));
             }
         }
     }
@@ -1039,8 +1064,7 @@ impl<'a> EventPipeline<'a> {
                 self.session_manager.process_state_change(&state);
             }
 
-            // Send the event
-            let _ = self.sender.send(LoungeEvent::StateChange(state));
+            self.send_event(LoungeEvent::StateChange(state));
         }
     }
 
@@ -1060,8 +1084,7 @@ impl<'a> EventPipeline<'a> {
                 self.session_manager.process_now_playing(&now_playing);
             }
 
-            // Send the original event
-            let _ = self.sender.send(LoungeEvent::NowPlaying(now_playing));
+            self.send_event(LoungeEvent::NowPlaying(now_playing));
         }
     }
 
@@ -1089,8 +1112,7 @@ impl<'a> EventPipeline<'a> {
                 self.session_manager
                     .process_device_list(&devices_with_info, status.queue_id.as_ref());
 
-                // Send the event
-                let _ = self.sender.send(LoungeEvent::LoungeStatus(
+                self.send_event(LoungeEvent::LoungeStatus(
                     devices_with_info,
                     status.queue_id.clone(),
                 ));
