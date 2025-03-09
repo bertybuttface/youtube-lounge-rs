@@ -150,6 +150,16 @@ impl SessionState {
         self.command_offset += 1;
         self.command_offset
     }
+
+    /// Get the current session information, useful before async operations
+    fn get_session_info(&self) -> (Option<String>, Option<String>, Option<String>) {
+        (self.sid.clone(), self.gsessionid.clone(), self.aid.clone())
+    }
+
+    /// Check if the session is valid (has sid and gsessionid)
+    fn is_valid(&self) -> bool {
+        self.sid.is_some() && self.gsessionid.is_some()
+    }
 }
 
 // Type for token refresh callback function
@@ -430,76 +440,15 @@ impl LoungeClient {
         }
 
         let body = response.bytes().await?;
-        let reader = BufReader::new(&body[..]);
 
-        let mut sid = None;
-        let mut gsessionid = None;
-
-        // Parse the entire response at once to extract the session IDs
-        let full_response = String::from_utf8_lossy(&body).to_string();
-
-        // Try to extract sid and gsessionid from the raw response
-        let c_marker = "[\"c\",\"";
-        if let Some(c_idx) = full_response.find(c_marker) {
-            let sid_start = c_idx + c_marker.len();
-            if let Some(sid_end) = full_response[sid_start..].find("\"") {
-                sid = Some(full_response[sid_start..sid_start + sid_end].to_string());
-            }
-        }
-
-        let s_marker = "[\"S\",\"";
-        if let Some(s_idx) = full_response.find(s_marker) {
-            let gsession_start = s_idx + s_marker.len();
-            if let Some(gsession_end) = full_response[gsession_start..].find("\"") {
-                gsessionid =
-                    Some(full_response[gsession_start..gsession_start + gsession_end].to_string());
-            }
-        }
-
-        // If the above string approach fails, try to parse individual lines
-        if sid.is_none() || gsessionid.is_none() {
-            // Parse the chunked response line by line
-            for line in reader.lines() {
-                let line = line?;
-                if line.trim().is_empty() || line.chars().all(|c| c.is_ascii_digit()) {
-                    continue;
-                }
-
-                if sid.is_none() && line.contains("[\"c\",\"") {
-                    if let Some(start_idx) = line.find("[\"c\",\"") {
-                        let start = start_idx + 5;
-                        if let Some(end_idx) = line[start..].find("\"") {
-                            sid = Some(line[start..start + end_idx].to_string());
-                        }
-                    }
-                }
-
-                if gsessionid.is_none() && line.contains("[\"S\",\"") {
-                    if let Some(start_idx) = line.find("[\"S\",\"") {
-                        let start = start_idx + 5;
-                        if let Some(end_idx) = line[start..].find("\"") {
-                            gsessionid = Some(line[start..start + end_idx].to_string());
-                        }
-                    }
-                }
-
-                if sid.is_some() && gsessionid.is_some() {
-                    break;
-                }
-            }
-        }
-
-        if sid.is_none() || gsessionid.is_none() {
-            return Err(LoungeError::InvalidResponse(
-                "Failed to obtain session IDs".to_string(),
-            ));
-        }
+        // Extract session IDs from the response body
+        let (sid, gsessionid) = extract_session_ids(&body)?;
 
         // Update session state with the IDs we obtained
         {
             let mut state = self.session_state.lock().unwrap();
-            state.sid = sid.clone();
-            state.gsessionid = gsessionid.clone();
+            state.sid = sid;
+            state.gsessionid = gsessionid;
         } // Lock is released here
 
         // Set connected flag
@@ -544,18 +493,18 @@ impl LoungeClient {
                 // Get session information and clone it before the await point
                 let (sid, gsessionid, aid) = {
                     let state = session_state.lock().unwrap();
-                    (
-                        state.sid.clone(),
-                        state.gsessionid.clone(),
-                        state.aid.clone(),
-                    )
-                };
 
-                if sid.is_none() || gsessionid.is_none() {
-                    // Need to reconnect
-                    *connected.lock().unwrap() = false;
-                    break;
-                }
+                    // Check if the session is valid
+                    if !state.is_valid() {
+                        // Need to reconnect
+                        drop(state); // explicitly release the lock
+                        *connected.lock().unwrap() = false;
+                        break;
+                    }
+
+                    // Get the session info
+                    state.get_session_info()
+                };
 
                 // Avoid unnecessary cloning by using static strings where possible
                 // and reusing the unwrapped values
@@ -682,19 +631,22 @@ impl LoungeClient {
         // Get the session state values we need
         let (sid, gsessionid, rid, ofs) = {
             let mut state = self.session_state.lock().unwrap();
-            (
-                state.sid.clone(),
-                state.gsessionid.clone(),
-                state.increment_rid(),
-                state.increment_offset(),
-            )
+
+            // Check if the session is valid
+            if !state.is_valid() {
+                return Err(LoungeError::SessionExpired);
+            }
+
+            // Get the values we need
+            let (sid, gsessionid, _) = state.get_session_info();
+            let rid = state.increment_rid();
+            let ofs = state.increment_offset();
+
+            (sid, gsessionid, rid, ofs)
         };
 
-        // Validate session IDs
-        match (sid, gsessionid) {
-            (Some(sid), Some(gsessionid)) => Ok((sid, gsessionid, rid, ofs)),
-            _ => Err(LoungeError::SessionExpired),
-        }
+        // Convert to non-optional types now that we know they're valid
+        Ok((sid.unwrap(), gsessionid.unwrap(), rid, ofs))
     }
 
     /// Send a command to the screen
@@ -805,6 +757,76 @@ impl LoungeClient {
             video_id, thumbnail_idx
         )
     }
+}
+
+/// Helper function to extract session IDs from a response body
+fn extract_session_ids(body: &Bytes) -> Result<(Option<String>, Option<String>), LoungeError> {
+    let reader = BufReader::new(&body[..]);
+    let mut sid = None;
+    let mut gsessionid = None;
+
+    // Parse the entire response at once to extract the session IDs
+    let full_response = String::from_utf8_lossy(body).to_string();
+
+    // Try to extract sid and gsessionid from the raw response
+    let c_marker = "[\"c\",\"";
+    if let Some(c_idx) = full_response.find(c_marker) {
+        let sid_start = c_idx + c_marker.len();
+        if let Some(sid_end) = full_response[sid_start..].find('\"') {
+            sid = Some(full_response[sid_start..sid_start + sid_end].to_string());
+        }
+    }
+
+    let s_marker = "[\"S\",\"";
+    if let Some(s_idx) = full_response.find(s_marker) {
+        let gsession_start = s_idx + s_marker.len();
+        if let Some(gsession_end) = full_response[gsession_start..].find('\"') {
+            gsessionid =
+                Some(full_response[gsession_start..gsession_start + gsession_end].to_string());
+        }
+    }
+
+    // If the above string approach fails, try to parse individual lines
+    if sid.is_none() || gsessionid.is_none() {
+        // Parse the chunked response line by line
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() || line.chars().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+
+            if sid.is_none() && line.contains("[\"c\",\"") {
+                if let Some(start_idx) = line.find("[\"c\",\"") {
+                    let start = start_idx + 5;
+                    if let Some(end_idx) = line[start..].find('\"') {
+                        sid = Some(line[start..start + end_idx].to_string());
+                    }
+                }
+            }
+
+            if gsessionid.is_none() && line.contains("[\"S\",\"") {
+                if let Some(start_idx) = line.find("[\"S\",\"") {
+                    let start = start_idx + 5;
+                    if let Some(end_idx) = line[start..].find('\"') {
+                        gsessionid = Some(line[start..start + end_idx].to_string());
+                    }
+                }
+            }
+
+            if sid.is_some() && gsessionid.is_some() {
+                break;
+            }
+        }
+    }
+
+    // Check if we found the session IDs
+    if sid.is_none() || gsessionid.is_none() {
+        return Err(LoungeError::InvalidResponse(
+            "Failed to obtain session IDs".to_string(),
+        ));
+    }
+
+    Ok((sid, gsessionid))
 }
 
 // Helper struct to reduce number of arguments in process_bytes_chunk
