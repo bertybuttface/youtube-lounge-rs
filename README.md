@@ -109,9 +109,27 @@ while let Some(event) = rx.recv().await {
 ### Controlling playback
 
 ```rust
-// Play a specific video
+// Play a specific video (recommended method)
+client.send_command(PlaybackCommand::set_playlist("dQw4w9WgXcQ".to_string())).await?;
+
+// Play a YouTube playlist by ID
+client.send_command(PlaybackCommand::set_playlist_by_id("PLxxxx".to_string())).await?;
+
+// Play a specific video in a playlist by index
+client.send_command(PlaybackCommand::set_playlist_with_index("PLxxxx".to_string(), 3)).await?;
+
+// Add a video to the queue (will play after current video)
+client.send_command(PlaybackCommand::add_video("QH2-TGUlwu4".to_string())).await?;
+
+// Manual construction (advanced usage with all parameters)
 client.send_command(PlaybackCommand::SetPlaylist { 
-    video_id: "dQw4w9WgXcQ".to_string() 
+    video_id: "dQw4w9WgXcQ".to_string(),
+    current_index: Some(-1),
+    list_id: None,
+    current_time: Some(0.0),
+    audio_only: Some(false),
+    params: None,
+    player_params: None,
 }).await?;
 
 // Pause playback
@@ -274,15 +292,51 @@ When debug mode is enabled, all events (including unknown ones) will print their
 
 Commands that can be sent to control playback:
 
-- `Play`
-- `Pause`
-- `Next`
-- `Previous`
-- `SkipAd`
-- `SetPlaylist { video_id: String }`
-- `SeekTo { new_time: f64 }`
-- `SetAutoplayMode { autoplay_mode: String }`
-- `SetVolume { volume: i32 }`
+#### Basic Control Commands
+- `Play` - Resume playback
+- `Pause` - Pause playback
+- `Next` - Skip to next video
+- `Previous` - Go to previous video
+- `SkipAd` - Skip current advertisement
+- `SeekTo { new_time: f64 }` - Seek to specific position
+- `SetAutoplayMode { autoplay_mode: String }` - Change autoplay settings
+- `SetVolume { volume: i32 }` - Set volume level (0-100)
+- `Mute` - Mute audio
+- `Unmute` - Unmute audio
+
+#### Content Commands
+
+**Play a single video:**
+```rust
+// Recommended approach
+PlaybackCommand::set_playlist("dQw4w9WgXcQ".to_string())
+
+// Full manual construction
+PlaybackCommand::SetPlaylist { 
+    video_id: "dQw4w9WgXcQ".to_string(),
+    current_index: Some(-1),
+    list_id: None,
+    current_time: Some(0.0),
+    audio_only: Some(false),
+    params: None,
+    player_params: None,
+}
+```
+
+**Play a YouTube playlist:**
+```rust
+// Play from beginning of playlist
+PlaybackCommand::set_playlist_by_id("PLxxxx".to_string())
+
+// Play specific video in playlist by index
+PlaybackCommand::set_playlist_with_index("PLxxxx".to_string(), 3)
+```
+
+**Add a video to queue:**
+```rust
+// Add to end of current queue
+PlaybackCommand::add_video("QH2-TGUlwu4".to_string())
+```
 
 ### `LoungeEvent`
 

@@ -147,6 +147,57 @@ async fn test_command_constructors() {
         _ => panic!("Wrong command type returned by set_playlist"),
     }
 
+    // Test the set_playlist_by_id helper
+    let playlist_id = "PLxxx123456".to_string();
+    let play_playlist = PlaybackCommand::set_playlist_by_id(playlist_id.clone());
+
+    match play_playlist {
+        PlaybackCommand::SetPlaylist {
+            video_id,
+            current_index,
+            list_id,
+            current_time,
+            audio_only,
+            params,
+            player_params,
+        } => {
+            assert_eq!(video_id, ""); // Should be empty when playing by playlist ID
+            assert_eq!(current_index, Some(0)); // Start from beginning
+            assert_eq!(list_id, Some(playlist_id.clone()));
+            assert_eq!(current_time, Some(0.0));
+            assert_eq!(audio_only, Some(false));
+            assert_eq!(params, None);
+            assert_eq!(player_params, None);
+        }
+        _ => panic!("Wrong command type returned by set_playlist_by_id"),
+    }
+
+    // Test the set_playlist_with_index helper
+    let index = 3;
+    let play_playlist_at_index =
+        PlaybackCommand::set_playlist_with_index(playlist_id.clone(), index);
+
+    match play_playlist_at_index {
+        PlaybackCommand::SetPlaylist {
+            video_id,
+            current_index,
+            list_id,
+            current_time,
+            audio_only,
+            params,
+            player_params,
+        } => {
+            assert_eq!(video_id, ""); // Should be empty when playing by playlist ID
+            assert_eq!(current_index, Some(index)); // Start from specified index
+            assert_eq!(list_id, Some(playlist_id));
+            assert_eq!(current_time, Some(0.0));
+            assert_eq!(audio_only, Some(false));
+            assert_eq!(params, None);
+            assert_eq!(player_params, None);
+        }
+        _ => panic!("Wrong command type returned by set_playlist_with_index"),
+    }
+
     // Test the add_video helper
     let add_video = PlaybackCommand::add_video(video_id.clone());
 
