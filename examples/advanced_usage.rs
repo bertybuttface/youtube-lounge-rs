@@ -426,9 +426,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Play a specific video with automatic token refresh
     match client
-        .send_command_with_refresh(PlaybackCommand::SetPlaylist {
-            video_id: video_id.to_string(),
-        })
+        .send_command_with_refresh(PlaybackCommand::set_playlist(video_id.to_string()))
         .await
     {
         Ok(_) => println!("Started playback of video: {}", video_id),
@@ -503,6 +501,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         Ok(_) => println!("Audio unmuted"),
         Err(e) => eprintln!("Failed to unmute: {}", e),
+    }
+
+    sleep(Duration::from_secs(2)).await;
+
+    // Demonstrate the AddVideo command - add another video to the queue
+    println!("\nDemonstrating queue functionality...");
+    println!("Adding a video to the queue (will play after current video)");
+    // Use a different video for demonstration
+    let queue_video_id = "QH2-TGUlwu4"; // Nyan Cat
+    match client
+        .send_command_with_refresh(PlaybackCommand::add_video(queue_video_id.to_string()))
+        .await
+    {
+        Ok(_) => println!("Successfully added video {} to queue", queue_video_id),
+        Err(e) => eprintln!("Failed to add video to queue: {}", e),
     }
 
     // Keeping the connection alive for a while - wait a bit longer
