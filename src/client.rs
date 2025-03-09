@@ -15,11 +15,18 @@ use tokio::time::sleep;
 // Import the debug_log macro from our utils module
 use crate::debug_log;
 
+// Connection constants
+const STANDARD_REQUEST_TIMEOUT: u64 = 300; // 5 minute timeout
+const LONG_POLL_TIMEOUT: u64 = 32 * 60; // 32 minutes timeout
+const POOL_IDLE_TIMEOUT: u64 = 90; // 90 seconds idle timeout
+const RECONNECT_DELAY: u64 = 5; // 5 second delay before retrying
+const RECONNECT_SHORT_DELAY: u64 = 1; // 1 second delay for normal reconnection
+
 // Create a static shared HTTP client for better connection pooling and DNS caching
 static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| {
     ClientBuilder::new()
-        .timeout(Duration::from_secs(300)) // 5 minute timeout for regular requests
-        .pool_idle_timeout(Some(Duration::from_secs(90))) // Keep connections alive longer
+        .timeout(Duration::from_secs(STANDARD_REQUEST_TIMEOUT))
+        .pool_idle_timeout(Some(Duration::from_secs(POOL_IDLE_TIMEOUT)))
         .build()
         .unwrap()
 });
@@ -28,8 +35,8 @@ static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| {
 // The YouTube API should send at least a NOOP message every 30 minutes
 static LONG_POLL_CLIENT: Lazy<Client> = Lazy::new(|| {
     ClientBuilder::new()
-        .timeout(Duration::from_secs(32 * 60)) // 32 minutes timeout
-        .pool_idle_timeout(Some(Duration::from_secs(90))) // Keep connections alive longer
+        .timeout(Duration::from_secs(LONG_POLL_TIMEOUT))
+        .pool_idle_timeout(Some(Duration::from_secs(POOL_IDLE_TIMEOUT)))
         .build()
         .unwrap()
 });
@@ -60,29 +67,19 @@ impl<'a> HttpResponseHandler<'a> {
 
     /// Handle standard YouTube API error status codes
     fn handle_error_status(&self, status: u16) -> Option<LoungeError> {
-        // Create a match statement instead of a map since LoungeError doesn't implement Clone
-        let error = match status {
-            400 => {
-                *self.connected.lock().unwrap() = false;
-                self.send_event(LoungeEvent::ScreenDisconnected);
-                Some(LoungeError::SessionExpired)
-            }
-            401 => {
-                *self.connected.lock().unwrap() = false;
-                self.send_event(LoungeEvent::ScreenDisconnected);
-                Some(LoungeError::TokenExpired)
-            }
-            410 => {
-                *self.connected.lock().unwrap() = false;
-                self.send_event(LoungeEvent::ScreenDisconnected);
-                Some(LoungeError::ConnectionClosed)
-            }
+        // Define error mapping and handle common cases
+        let specific_error = match status {
+            400 => Some(LoungeError::SessionExpired),
+            401 => Some(LoungeError::TokenExpired),
+            410 => Some(LoungeError::ConnectionClosed),
             _ => None,
         };
 
-        // Return the error if we found one, or check for generic error condition
-        if error.is_some() {
-            return error;
+        // For specific errors, mark as disconnected and notify
+        if let Some(error) = specific_error {
+            *self.connected.lock().unwrap() = false;
+            self.send_event(LoungeEvent::ScreenDisconnected);
+            return Some(error);
         }
 
         // Handle other error statuses
@@ -93,7 +90,7 @@ impl<'a> HttpResponseHandler<'a> {
             )));
         }
 
-        None // No error for successful status codes
+        None
     }
 
     /// Process a response and return an error if the status code indicates an error
@@ -416,12 +413,8 @@ impl LoungeClient {
             ("auth_failure_option", "send_error"),
         ];
 
-        let form_data = format!(
-            "app=web&mdx-version=3&name={}&id={}&device=REMOTE_CONTROL&capabilities=que,dsdtr,atp&method=setPlaylist&magnaKey=cloudPairedDevice&ui=false&deviceContext=user_agent=dunno&window_width_points=&window_height_points=&os_name=android&ms=&theme=cl&loungeIdToken={}",
-            urlencoding::encode(&self.device_name),
-            self.screen_id,
-            self.lounge_token
-        );
+        // Build the connect form data
+        let form_data = self.build_connect_form_data();
 
         let response = self
             .client
@@ -540,7 +533,7 @@ impl LoungeClient {
                     Err(e) => {
                         // Log the error and retry after a delay
                         eprintln!("Event subscription error: {}", e);
-                        sleep(Duration::from_secs(5)).await;
+                        sleep(Duration::from_secs(RECONNECT_DELAY)).await;
                         continue;
                     }
                 };
@@ -558,7 +551,7 @@ impl LoungeClient {
 
                         // For other errors, retry after a delay
                         _ => {
-                            sleep(Duration::from_secs(5)).await;
+                            sleep(Duration::from_secs(RECONNECT_DELAY)).await;
                             continue;
                         }
                     }
@@ -596,7 +589,7 @@ impl LoungeClient {
 
                 // If we reach here, the connection was closed
                 // Wait a moment before reconnecting
-                sleep(Duration::from_secs(1)).await;
+                sleep(Duration::from_secs(RECONNECT_SHORT_DELAY)).await;
             }
 
             // Function ended, client is disconnected
@@ -748,6 +741,39 @@ impl LoungeClient {
         *self.connected.lock().unwrap() = false;
 
         Ok(())
+    }
+
+    /// Build form data for initial connection request
+    fn build_connect_form_data(&self) -> String {
+        // Encode the device name first to avoid temporary value issues
+        let encoded_name = urlencoding::encode(&self.device_name);
+
+        // Use a Vec to build up the form parameters
+        let params = vec![
+            ("app", "web"),
+            ("mdx-version", "3"),
+            ("name", &encoded_name),
+            ("id", &self.screen_id),
+            ("device", "REMOTE_CONTROL"),
+            ("capabilities", "que,dsdtr,atp"),
+            ("method", "setPlaylist"),
+            ("magnaKey", "cloudPairedDevice"),
+            ("ui", "false"),
+            ("deviceContext", "user_agent=dunno"),
+            ("window_width_points", ""),
+            ("window_height_points", ""),
+            ("os_name", "android"),
+            ("ms", ""),
+            ("theme", "cl"),
+            ("loungeIdToken", &self.lounge_token),
+        ];
+
+        // Join the parameters with '&'
+        params
+            .into_iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<String>>()
+            .join("&")
     }
 
     // Get video thumbnail URL
