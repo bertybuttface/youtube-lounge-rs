@@ -929,7 +929,7 @@ impl LoungeClient {
             ("mdx-version", "3"),
             ("name", &encoded_name),
             // Per API docs, id should be empty for initial connection, not the screen_id
-            ("id", ""),
+            ("id", &self.screen_id),
             ("device", "REMOTE_CONTROL"),
             ("capabilities", "que,dsdtr,atp"),
             ("method", "setPlaylist"),
