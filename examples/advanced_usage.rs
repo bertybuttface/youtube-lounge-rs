@@ -20,6 +20,7 @@ struct StoredScreen {
     screen_id: String,
     lounge_token: String,
     device_name: String,
+    device_id: Option<String>, // Device ID for persistent sessions
 }
 
 impl From<&Screen> for StoredScreen {
@@ -29,6 +30,7 @@ impl From<&Screen> for StoredScreen {
             screen_id: screen.screen_id.clone(),
             lounge_token: screen.lounge_token.clone(),
             device_name: "Rust Lounge Client".to_string(),
+            device_id: None, // Will be set after client creation
         }
     }
 }
@@ -160,11 +162,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create a client with the stored screen info
-    let mut client = LoungeClient::new(
-        &stored_screen.screen_id,
-        &stored_screen.lounge_token,
-        &stored_screen.device_name,
-    );
+    let mut client = if let Some(device_id) = &stored_screen.device_id {
+        println!("Using persistent device ID: {}", device_id);
+        // Use the existing device ID for continuity across sessions
+        LoungeClient::with_device_id(
+            &stored_screen.screen_id,
+            &stored_screen.lounge_token,
+            &stored_screen.device_name,
+            device_id,
+        )
+    } else {
+        // Generate a new device ID (this is the first connection)
+        let client = LoungeClient::new(
+            &stored_screen.screen_id,
+            &stored_screen.lounge_token,
+            &stored_screen.device_name,
+        );
+
+        // Save the generated device ID for future sessions
+        let device_id = client.device_id().to_string();
+        println!("Generated new device ID: {}", device_id);
+
+        // Update our storage with the new device ID
+        let mut updated_screen = stored_screen.clone();
+        updated_screen.device_id = Some(device_id);
+
+        auth_store
+            .screens
+            .insert(updated_screen.screen_id.clone(), updated_screen);
+
+        // Save the updated authentication data with device ID
+        if let Err(e) = save_auth_data(&auth_store) {
+            eprintln!("Warning: Failed to save device ID: {}", e);
+        } else {
+            println!("Device ID saved successfully for future sessions");
+        }
+
+        client
+    };
 
     // Check for debug mode flag
     let debug_mode = args.contains(&"debug".to_string());
@@ -222,7 +257,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Connect to the screen
+    // First get receivers to listen for events and session updates
+    // IMPORTANT: Always subscribe to events BEFORE connecting
+    let mut rx = client.event_receiver();
+    let mut session_rx = client.session_receiver();
+
+    // Now connect to the screen
     println!("Connecting to screen...");
     match client.connect().await {
         Ok(_) => println!("Connected to screen"),
@@ -231,10 +271,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     }
-
-    // Get receivers to listen for events and session updates
-    let mut rx = client.event_receiver();
-    let mut session_rx = client.session_receiver();
 
     // Spawn a task to handle events
     let event_handle = tokio::spawn(async move {
@@ -434,7 +470,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Wait a bit to let the video start
-    sleep(Duration::from_secs(3)).await;
+    sleep(Duration::from_secs(2)).await;
 
     // Pause the video with automatic token refresh
     match client
@@ -445,7 +481,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to pause: {}", e),
     }
 
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(2)).await;
 
     // Resume playback with automatic token refresh
     match client
@@ -456,7 +492,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to resume: {}", e),
     }
 
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(2)).await;
 
     // Seek to 30 seconds with automatic token refresh
     match client
@@ -467,7 +503,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to seek: {}", e),
     }
 
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(2)).await;
 
     // Adjust volume with automatic token refresh
     match client
@@ -479,7 +515,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Wait a bit between commands
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(2)).await;
 
     // Mute the volume
     println!("Muting audio...");
@@ -491,7 +527,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => eprintln!("Failed to mute: {}", e),
     }
 
-    sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(2)).await;
 
     // Unmute the volume
     println!("Unmuting audio...");

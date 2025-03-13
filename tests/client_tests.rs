@@ -1,6 +1,6 @@
 use youtube_lounge_rs::{LoungeClient, LoungeEvent};
 
-// Test the client constructor
+// Test the client constructor with auto-generated device ID
 #[tokio::test]
 async fn test_client_new() {
     let client = LoungeClient::new("test_screen_id", "test_token", "Test Device");
@@ -8,7 +8,25 @@ async fn test_client_new() {
     // Verify event channel is created by subscribing to it
     let _receiver = client.event_receiver();
 
-    // Not much else to test on the new function as it's just initializing fields
+    // Verify that we have a device ID (UUID format)
+    let device_id = client.device_id();
+    assert!(!device_id.is_empty());
+    assert!(device_id.len() >= 32); // UUID format has at least 32 characters
+}
+
+// Test the client constructor with explicit device ID
+#[tokio::test]
+async fn test_client_with_device_id() {
+    let test_device_id = "persistent-device-id-123";
+    let client = LoungeClient::with_device_id(
+        "test_screen_id",
+        "test_token",
+        "Test Device",
+        test_device_id,
+    );
+
+    // Verify the device ID was set correctly
+    assert_eq!(client.device_id(), test_device_id);
 }
 
 // Test get_thumbnail_url generates correct URL

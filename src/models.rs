@@ -535,10 +535,30 @@ impl HasDuration for NowPlaying {
 // Device info
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviceInfo {
+    #[serde(default)]
     pub brand: String,
+    #[serde(default)]
     pub model: String,
-    #[serde(rename = "deviceType")]
+    #[serde(rename = "deviceType", default)]
     pub device_type: String,
+    #[serde(default)]
+    pub year: i32,
+    #[serde(default)]
+    pub os: String,
+    #[serde(rename = "osVersion", default)]
+    pub os_version: String,
+    #[serde(default)]
+    pub chipset: String,
+    #[serde(rename = "clientName", default)]
+    pub client_name: String,
+    #[serde(rename = "dialAdditionalDataSupportLevel", default)]
+    pub dial_additional_data_support_level: String,
+    #[serde(rename = "mdxDialServerType", default)]
+    pub mdx_dial_server_type: String,
+    #[serde(rename = "hasIdentityDifferentFromCurrent", default)]
+    pub has_identity_different_from_current: bool,
+    #[serde(rename = "switchableIdentitiesSuffix", default)]
+    pub switchable_identities_suffix: String,
 }
 
 // Device

@@ -11,6 +11,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::task;
 use tokio::time::sleep;
+use uuid::Uuid;
 
 // Import the debug_log macro from our utils module
 use crate::debug_log;
@@ -79,11 +80,14 @@ impl<'a> HttpResponseHandler<'a> {
 
         // For specific errors, mark as disconnected and notify
         if let Some(error) = specific_error {
+            // First send the disconnect event so it can be processed
+            self.send_event(LoungeEvent::ScreenDisconnected);
+
+            // Then update the connected state
             match self.connected.lock() {
                 Ok(mut lock) => *lock = false,
                 Err(err) => eprintln!("Mutex poisoned when updating connected state: {:?}", err),
             }
-            self.send_event(LoungeEvent::ScreenDisconnected);
             return Some(error);
         }
 
@@ -171,30 +175,48 @@ pub type TokenRefreshCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
 pub struct LoungeClient {
     client: Client,
     screen_id: String,
+    device_id: String, // Store device_id explicitly (same as screen_id initially)
     lounge_token: String,
     device_name: String,
     session_state: Arc<Mutex<SessionState>>,
     event_sender: broadcast::Sender<LoungeEvent>,
     connected: Arc<Mutex<bool>>,
     token_refresh_callback: Option<TokenRefreshCallback>,
-    // Session manager handles all session tracking
+    // Session manager handles session tracking for this specific device
     session_manager: PlaybackSessionManager,
 }
 
 impl LoungeClient {
+    /// Create a new client with a random device ID
     pub fn new(screen_id: &str, lounge_token: &str, device_name: &str) -> Self {
+        // Generate a random UUID for the device ID
+        let device_id = Uuid::new_v4().to_string();
+        Self::with_device_id(screen_id, lounge_token, device_name, &device_id)
+    }
+
+    /// Create a new client with a specific device ID
+    ///
+    /// This allows reusing the same device ID across sessions, which can be useful
+    /// for persistence and continuity in user experience.
+    pub fn with_device_id(
+        screen_id: &str,
+        lounge_token: &str,
+        device_name: &str,
+        device_id: &str,
+    ) -> Self {
         // Use the shared client to benefit from connection pooling and DNS caching
         let client = SHARED_CLIENT.clone();
 
         // Create a broadcast channel with capacity for 100 events
         let (event_tx, _event_rx) = broadcast::channel(100);
 
-        // Create a new session manager
-        let session_manager = PlaybackSessionManager::new();
+        // Create a new session manager for this specific device (screen)
+        let session_manager = PlaybackSessionManager::new(screen_id);
 
         Self {
             client,
             screen_id: screen_id.to_string(),
+            device_id: device_id.to_string(),
             lounge_token: lounge_token.to_string(),
             device_name: device_name.to_string(),
             session_state: Arc::new(Mutex::new(SessionState::new())),
@@ -203,6 +225,13 @@ impl LoungeClient {
             token_refresh_callback: None,
             session_manager,
         }
+    }
+
+    /// Get the current device ID
+    ///
+    /// This can be stored by the application to provide persistence across sessions.
+    pub fn device_id(&self) -> &str {
+        &self.device_id
     }
 
     /// Set a callback function that will be called when the token is refreshed
@@ -407,7 +436,11 @@ impl LoungeClient {
         }
     }
 
-    // Connect to the screen and establish a session
+    /// Connect to the screen and establish a session
+    ///
+    /// IMPORTANT: For best results, always call event_receiver() to subscribe to events
+    /// BEFORE calling connect(). This ensures you won't miss the SessionEstablished event
+    /// or any other early events.
     pub async fn connect(&self) -> Result<(), LoungeError> {
         // Reset session state before making any async calls
         {
@@ -489,11 +522,14 @@ impl LoungeClient {
             }
         } // Lock is released here
 
-        // Send session established event
-        let handler = HttpResponseHandler::new(&self.connected, &self.event_sender);
-        handler.send_event(LoungeEvent::SessionEstablished);
+        // Send the SessionEstablished event now that we have valid session IDs
+        // We'll only do this if there are active event subscribers to avoid the "channel closed" error
+        if self.event_sender.receiver_count() > 0 {
+            let handler = HttpResponseHandler::new(&self.connected, &self.event_sender);
+            handler.send_event(LoungeEvent::SessionEstablished);
+        }
 
-        // Start the event subscription loop
+        // Start the event subscription loop for ongoing event processing
         self.subscribe_to_events().await?;
 
         Ok(())
@@ -893,27 +929,47 @@ impl LoungeClient {
         // Build the terminate form data
         let form_data = "ui=&TYPE=terminate&clientDisconnectReason=MDX_SESSION_DISCONNECT_REASON_DISCONNECTED_BY_USER";
 
-        // Send the request - ignore errors since we'll mark as disconnected anyway
-        let _ = self
+        // Send the disconnect request
+        let response = match self
             .client
             .post("https://www.youtube.com/api/lounge/bc/bind")
             .query(&params)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(form_data)
             .send()
-            .await;
-
-        // Set connected to false
-        if let Err(err) = self
-            .connected
-            .lock()
-            .map(|mut connected| *connected = false)
+            .await
         {
+            Ok(resp) => resp,
+            Err(e) => {
+                eprintln!("Error sending disconnect request: {}", e);
+                // Even if there's an error, we should still set connected to false
+                // to ensure the event loop exits
+                if let Err(err) = self.connected.lock().map(|mut c| *c = false) {
+                    eprintln!("Failed to update connected state: {:?}", err);
+                }
+                return Err(LoungeError::from(e));
+            }
+        };
+
+        // Check response status
+        if !response.status().is_success() {
             eprintln!(
-                "Failed to update connected state during disconnect: {:?}",
-                err
+                "Disconnect request failed with status: {}",
+                response.status()
             );
         }
+
+        // Wait a brief moment for the connection to close properly and any
+        // final events to be processed by the event loop
+        sleep(Duration::from_millis(500)).await;
+
+        // Set connected to false to stop the event loop
+        if let Err(err) = self.connected.lock().map(|mut c| *c = false) {
+            eprintln!("Failed to update connected state: {:?}", err);
+        }
+
+        // Allow a short grace period for the event loop to exit cleanly
+        sleep(Duration::from_millis(100)).await;
 
         Ok(())
     }
@@ -927,9 +983,8 @@ impl LoungeClient {
         let params = vec![
             ("app", "web"),
             ("mdx-version", "3"),
-            ("name", &encoded_name),
-            // Per API docs, id should be empty for initial connection, not the screen_id
-            ("id", &self.screen_id),
+            ("name", &encoded_name), // Human-readable name shown in YouTube UI
+            ("id", &self.device_id), // Unique ID for this controller instance
             ("device", "REMOTE_CONTROL"),
             ("capabilities", "que,dsdtr,atp"),
             ("method", "setPlaylist"),
@@ -1366,18 +1421,27 @@ impl<'a> EventPipeline<'a> {
                         let devices_with_info: Vec<Device> = devices
                             .into_iter()
                             .map(|mut device| {
-                                match serde_json::from_str::<DeviceInfo>(&device.device_info_raw) {
-                                    Ok(info) => {
-                                        device.device_info = Some(info);
-                                    },
-                                    Err(err) => {
-                                        eprintln!(
-                                            "Failed to deserialize DeviceInfo for device {}: {} - Raw: '{}'", 
-                                            device.id,
-                                            err,
-                                            device.device_info_raw
-                                        );
-                                        // Still proceed with the device, even without device_info
+                                if device.device_info_raw.trim().is_empty() {
+                                    debug_log!(
+                                        self.debug_mode,
+                                        "Device {} has empty device_info_raw - this is common for controller devices",
+                                        device.id
+                                    );
+                                    // No device_info to set, proceed with None
+                                } else {
+                                    match serde_json::from_str::<DeviceInfo>(&device.device_info_raw) {
+                                        Ok(info) => {
+                                            device.device_info = Some(info);
+                                        },
+                                        Err(err) => {
+                                            eprintln!(
+                                                "Failed to deserialize DeviceInfo for device {}: {} - Raw: '{}'", 
+                                                device.id,
+                                                err,
+                                                device.device_info_raw
+                                            );
+                                            // Still proceed with the device, even without device_info
+                                        }
                                     }
                                 }
                                 device
@@ -1385,6 +1449,7 @@ impl<'a> EventPipeline<'a> {
                             .collect();
 
                         // Use the session manager to process device list
+                        // This will update our current session with the proper device_id
                         self.session_manager
                             .process_device_list(&devices_with_info, status.queue_id.as_ref());
 
@@ -1400,8 +1465,6 @@ impl<'a> EventPipeline<'a> {
                         );
 
                         // Still fire the event with an empty device list to maintain connection
-                        self.session_manager
-                            .process_device_list(&[], status.queue_id.as_ref());
                         self.send_event(LoungeEvent::LoungeStatus(
                             vec![], // Empty device list
                             status.queue_id.clone(),

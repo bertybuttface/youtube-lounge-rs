@@ -15,11 +15,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Successfully paired with screen: {:?}", screen);
 
     // Step 2: Create client using the screen information from pairing
+    // For a persistent device_id, you could load a saved device_id from a config file
+    // and use LoungeClient::with_device_id instead
     let mut client = LoungeClient::new(
         &screen.screen_id,
         &screen.lounge_token,
         "Rust YouTube Controller",
     );
+
+    // Get the device_id that was generated - in a real app, you might want to save this
+    // for future sessions to maintain continuity
+    println!("Using device ID: {}", client.device_id());
 
     // Enable debug mode to see all raw event data
     client.enable_debug_mode();
@@ -42,6 +48,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // and then connect, since connecting doesn't have its own automatic refresh method
     println!("Connecting to screen...");
 
+    // Create another receiver for session updates
+    let mut session_rx = client.session_receiver();
+
     // Make sure screen is available and token is valid before connecting
     if client.check_screen_availability_with_refresh().await? {
         // Connect to the screen with valid token
@@ -52,7 +61,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    // Step 6: Spawn a task to handle events from the TV
+    // Step 6: Spawn tasks to handle events and session updates from the TV
+
+    // Task to handle session updates
+    tokio::spawn(async move {
+        loop {
+            match session_rx.recv().await {
+                Ok(session) => {
+                    println!("Session update:");
+                    if let Some(video_id) = &session.video_id {
+                        println!("  Video ID: {}", video_id);
+                    }
+                    if let Some(title) = &session.title {
+                        println!("  Title: {}", title);
+                    }
+                    println!("  Status: {}", session.status());
+                    println!(
+                        "  Position: {:.1}s / {:.1}s",
+                        session.current_time, session.duration
+                    );
+                }
+                Err(e) => match e {
+                    tokio::sync::broadcast::error::RecvError::Closed => {
+                        println!("Session channel closed");
+                        break;
+                    }
+                    tokio::sync::broadcast::error::RecvError::Lagged(missed) => {
+                        println!("Missed {} session updates due to lagging", missed);
+                    }
+                },
+            }
+        }
+    });
+
+    // Task to handle event updates
     tokio::spawn(async move {
         loop {
             match receiver.recv().await {
@@ -75,6 +117,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     LoungeEvent::ScreenDisconnected => {
                         println!("Screen disconnected");
                         break;
+                    }
+                    LoungeEvent::SessionEstablished => {
+                        println!("Session established - ready to send commands");
                     }
                     LoungeEvent::Unknown(event_info) => {
                         println!("======= UNKNOWN EVENT =======");
