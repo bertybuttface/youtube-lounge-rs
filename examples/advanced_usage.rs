@@ -564,18 +564,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(10)).await;
 
     println!("\n=== Session Query Demonstration ===");
-    // Get the current session if it exists
-    if let Some(session) = client.get_current_session() {
-        println!("There is currently 1 active session");
 
-        let cpn = &session.cpn;
-        println!("Querying session with CPN: {}", cpn);
-        if let Some(session) = client.get_session_by_cpn(cpn) {
-            println!(
-                "  Found session: {} in state {}",
-                session.video_id.as_deref().unwrap_or("Unknown"),
-                session.state_name()
-            );
+    // Method 1: Check if we have a session for a specific video
+    let has_rickroll = client.has_session_with_video_id("dQw4w9WgXcQ");
+    println!("Has Rick Astley video session: {}", has_rickroll);
+
+    // Method 2: Check if the session is playing
+    let is_playing = client.has_playing_session();
+    println!("Has playing session: {}", is_playing);
+
+    // Method 3: Get the current session for detailed info
+    if let Some(session) = client.get_current_session() {
+        println!("Current session details:");
+        println!(
+            "  Video: {} in state {}",
+            session.video_id.as_deref().unwrap_or("Unknown"),
+            session.state_name()
+        );
+        println!("  CPN: {}", session.cpn);
+        println!(
+            "  Position: {:.1}s / {:.1}s",
+            session.current_time, session.duration
+        );
+
+        // Also demonstrate the legacy CPN method (now redundant but maintained for compatibility)
+        println!("\nLegacy CPN lookup (now redundant):");
+        if let Some(_) = client.get_session_by_cpn(&session.cpn) {
+            println!("  Successfully found session by CPN");
         }
     } else {
         println!("No active session found");
