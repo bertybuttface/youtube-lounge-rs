@@ -72,10 +72,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     if let Some(video_id) = &session.video_id {
                         println!("  Video ID: {}", video_id);
                     }
-                    if let Some(title) = &session.title {
-                        println!("  Title: {}", title);
-                    }
-                    println!("  Status: {}", session.status());
+                    // The title field is not directly available in PlaybackSession
+                    println!("  Status: {:?}", session.status());
                     println!(
                         "  Position: {:.1}s / {:.1}s",
                         session.current_time, session.duration
