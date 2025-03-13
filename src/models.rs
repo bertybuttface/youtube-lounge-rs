@@ -671,11 +671,11 @@ pub struct AudioTrackChanged {
 pub struct PlaylistModified {
     #[serde(rename = "currentIndex", default)]
     pub current_index: Option<String>,
-    #[serde(rename = "firstVideoId")]
+    #[serde(rename = "firstVideoId", default)]
     pub first_video_id: String,
-    #[serde(rename = "listId")]
+    #[serde(rename = "listId", default)]
     pub list_id: String,
-    #[serde(rename = "videoId")]
+    #[serde(rename = "videoId", default)]
     pub video_id: String,
 }
 
