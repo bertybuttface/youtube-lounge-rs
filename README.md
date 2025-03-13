@@ -271,10 +271,11 @@ cargo run --example advanced_usage help
 
 Advanced example features:
 - **Persistent Authentication**: Stores screen information in a JSON file
-- **Multiple Paired Screens**: Can store and manage multiple paired screens
+- **Multi-Screen Control**: Connects to and controls multiple paired screens simultaneously
 - **Command-Line Interface**: Supports different modes via command-line arguments
 - **Token Refresh**: Automatically handles token refreshing and persistence
 - **Debug Mode**: Option to display raw JSON for all events
+- **Parallel Commands**: Sends commands to multiple screens in parallel
 - **Session Tracking**: Demonstrates all session query methods
 - **Comprehensive Event Handling**: Shows handling for all event types
 
