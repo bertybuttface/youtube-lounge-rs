@@ -162,17 +162,7 @@ impl PlaybackSessionManager {
         current.clone()
     }
 
-    /// Compatibility method for existing code - returns a vec with at most one session
-    pub fn get_all_sessions(&self) -> Vec<PlaybackSession> {
-        let current = self.current_session.lock().unwrap();
-        if let Some(session) = current.as_ref() {
-            vec![session.clone()]
-        } else {
-            vec![]
-        }
-    }
-
-    /// Get session by CPN (Content Playback Network ID)
+    /// Get the current session if it exists and matches a specific CPN
     pub fn get_session_by_cpn(&self, cpn: &str) -> Option<PlaybackSession> {
         let current = self.current_session.lock().unwrap();
         if let Some(session) = current.as_ref() {
@@ -183,38 +173,31 @@ impl PlaybackSessionManager {
         None
     }
 
-    // We no longer need get_session_for_device as each session manager
-    // is associated with exactly one device
-
-    /// Get sessions by playback status - returns at most one session
-    pub fn get_sessions_by_status(&self, status: PlaybackStatus) -> Vec<PlaybackSession> {
+    /// Check if the current session has a specific status
+    pub fn has_session_with_status(&self, status: PlaybackStatus) -> bool {
         let current = self.current_session.lock().unwrap();
         if let Some(session) = current.as_ref() {
-            if session.status() == status {
-                return vec![session.clone()];
-            }
+            return session.status() == status;
         }
-        vec![]
+        false
     }
 
-    /// Get sessions by video ID - returns at most one session
-    pub fn get_sessions_by_video_id(&self, video_id: &str) -> Vec<PlaybackSession> {
+    /// Check if the current session is playing
+    pub fn has_playing_session(&self) -> bool {
+        self.has_session_with_status(PlaybackStatus::Playing)
+    }
+
+    /// Check if the current session is for a specific video
+    pub fn has_session_with_video_id(&self, video_id: &str) -> bool {
         let current = self.current_session.lock().unwrap();
         if let Some(session) = current.as_ref() {
-            if session.video_id.as_deref() == Some(video_id) {
-                return vec![session.clone()];
-            }
+            return session.video_id.as_deref() == Some(video_id);
         }
-        vec![]
+        false
     }
 
-    /// Get currently playing sessions - convenience method
-    pub fn get_playing_sessions(&self) -> Vec<PlaybackSession> {
-        self.get_sessions_by_status(PlaybackStatus::Playing)
-    }
-
-    /// Clear the session (e.g., on disconnect)
-    pub fn clear_sessions(&self) {
+    /// Clear the current session (e.g., on disconnect)
+    pub fn clear_session(&self) {
         let mut current = self.current_session.lock().unwrap();
         *current = None;
     }

@@ -83,7 +83,7 @@ impl<'a> HttpResponseHandler<'a> {
             // First send the disconnect event so it can be processed
             self.send_event(LoungeEvent::ScreenDisconnected);
 
-            // Then update the connected state
+            // Then update the connected state to stop event loop
             match self.connected.lock() {
                 Ok(mut lock) => *lock = false,
                 Err(err) => eprintln!("Mutex poisoned when updating connected state: {:?}", err),
@@ -307,14 +307,14 @@ impl LoungeClient {
         self.session_manager.get_current_session()
     }
 
-    // Get all active sessions
-    pub fn get_all_sessions(&self) -> Vec<PlaybackSession> {
-        self.session_manager.get_all_sessions()
+    // Check if there is a currently playing session
+    pub fn has_playing_session(&self) -> bool {
+        self.session_manager.has_playing_session()
     }
 
-    // Get currently playing sessions
-    pub fn get_playing_sessions(&self) -> Vec<PlaybackSession> {
-        self.session_manager.get_playing_sessions()
+    // Check if there is a session for a specific video
+    pub fn has_session_with_video_id(&self, video_id: &str) -> bool {
+        self.session_manager.has_session_with_video_id(video_id)
     }
 
     // Pair with a screen using a pairing code
@@ -940,8 +940,12 @@ impl LoungeClient {
             Ok(resp) => resp,
             Err(e) => {
                 eprintln!("Error sending disconnect request: {}", e);
-                // Even if there's an error, we should still set connected to false
-                // to ensure the event loop exits
+                // Even if there's an error, we should still clean up properly
+
+                // Clear the session state
+                self.session_manager.clear_session();
+
+                // Set connected to false to ensure the event loop exits
                 if let Err(err) = self.connected.lock().map(|mut c| *c = false) {
                     eprintln!("Failed to update connected state: {:?}", err);
                 }
@@ -960,6 +964,9 @@ impl LoungeClient {
         // Wait a brief moment for the connection to close properly and any
         // final events to be processed by the event loop
         sleep(Duration::from_millis(500)).await;
+
+        // Clear the session state since we're disconnected
+        self.session_manager.clear_session();
 
         // Set connected to false to stop the event loop
         if let Err(err) = self.connected.lock().map(|mut c| *c = false) {
@@ -1299,7 +1306,11 @@ impl<'a> EventPipeline<'a> {
             "loungeStatus" => self.process_lounge_status(payload),
 
             // Simple notification events
-            "loungeScreenDisconnected" => self.send_event(LoungeEvent::ScreenDisconnected),
+            "loungeScreenDisconnected" => {
+                // Clear the session first since we're disconnected
+                self.session_manager.clear_session();
+                self.send_event(LoungeEvent::ScreenDisconnected);
+            }
 
             // Simple events that follow the same pattern - grouped by category
 

@@ -564,16 +564,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(10)).await;
 
     println!("\n=== Session Query Demonstration ===");
-    // Get all active sessions
-    let all_sessions = client.get_all_sessions();
-    println!(
-        "There are currently {} active session(s)",
-        all_sessions.len()
-    );
+    // Get the current session if it exists
+    if let Some(session) = client.get_current_session() {
+        println!("There is currently 1 active session");
 
-    // If we have any sessions, demonstrate querying by CPN
-    if !all_sessions.is_empty() {
-        let cpn = &all_sessions[0].cpn;
+        let cpn = &session.cpn;
         println!("Querying session with CPN: {}", cpn);
         if let Some(session) = client.get_session_by_cpn(cpn) {
             println!(
@@ -582,6 +577,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 session.state_name()
             );
         }
+    } else {
+        println!("No active session found");
     }
 
     sleep(Duration::from_secs(10)).await;
