@@ -3,7 +3,7 @@ use tokio::sync::broadcast;
 
 use crate::debug_log;
 use crate::models::{Device, NowPlaying, PlaybackSession, PlaybackState};
-use crate::utils::state::PlaybackStatus;
+use crate::utils::state::{HasPlaybackState, PlaybackStatus};
 
 /// Manages a single playback session for a device/screen
 #[derive(Clone)]

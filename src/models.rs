@@ -33,7 +33,7 @@ impl PlaybackSession {
             list_id: event.list_id.clone(),
             current_time: event.current_time(),
             duration: event.duration(),
-            state: PlaybackStatus::from(event).to_i32(),
+            state: event.status().to_i32(),
             loaded_time: event.loaded_time(),
             seekable_start_time: event.seekable_start_time(),
             seekable_end_time: event.seekable_end_time(),
@@ -62,7 +62,7 @@ impl PlaybackSession {
         }
 
         // Update state
-        let new_state = PlaybackStatus::from(event).to_i32();
+        let new_state = event.status().to_i32();
         if self.state != new_state {
             self.state = new_state;
             updated = true;
@@ -105,7 +105,7 @@ impl PlaybackSession {
             list_id: None,
             current_time: event.current_time(),
             duration: event.duration(),
-            state: PlaybackStatus::from(event).to_i32(),
+            state: event.status().to_i32(),
             loaded_time: event.loaded_time(),
             seekable_start_time: event.seekable_start_time(),
             seekable_end_time: event.seekable_end_time(),
@@ -115,37 +115,12 @@ impl PlaybackSession {
         })
     }
 
-    // Get the playback status
-    pub fn status(&self) -> PlaybackStatus {
-        PlaybackStatus::from_i32(self.state)
-    }
-
     // Get status name
     pub fn state_name(&self) -> &'static str {
         self.status().as_str()
     }
 
-    // Delegate to PlaybackStatus for state checking
-    pub fn is_playing(&self) -> bool {
-        self.status() == PlaybackStatus::Playing
-    }
-
-    pub fn is_paused(&self) -> bool {
-        self.status() == PlaybackStatus::Paused
-    }
-
-    pub fn is_ad(&self) -> bool {
-        self.status() == PlaybackStatus::Advertisement
-    }
-
-    pub fn is_buffering(&self) -> bool {
-        self.status() == PlaybackStatus::BufferingBetween
-    }
-
-    pub fn is_stopped(&self) -> bool {
-        self.status() == PlaybackStatus::Stopped
-    }
-
+    // Progress calculation
     pub fn progress_percentage(&self) -> f64 {
         if self.duration > 0.0 {
             (self.current_time / self.duration) * 100.0
@@ -228,92 +203,6 @@ pub struct VideoData {
     pub is_playable: bool,
 }
 
-// Playback state event
-/// Enum representing different playback states
-///
-/// NOTE: This is kept for backward compatibility but
-/// should be replaced with PlaybackStatus in new code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PlaybackStateValue {
-    /// Video is stopped
-    Stopped = -1,
-    /// Buffering between videos
-    BufferingBetween = 0,
-    /// Video is currently playing
-    Playing = 1,
-    /// Video is paused
-    Paused = 2,
-    /// Video is starting
-    Starting = 3,
-    /// Video has ended
-    Ended = 5,
-    /// Advertisement is playing
-    Advertisement = 1081,
-    /// Unknown state
-    Unknown = -99,
-}
-
-impl PlaybackStateValue {
-    /// Convert from integer state to enum value
-    pub fn from_i32(state: i32) -> Self {
-        match state {
-            -1 => PlaybackStateValue::Stopped,
-            0 => PlaybackStateValue::BufferingBetween,
-            1 => PlaybackStateValue::Playing,
-            2 => PlaybackStateValue::Paused,
-            3 => PlaybackStateValue::Starting,
-            5 => PlaybackStateValue::Ended,
-            1081 => PlaybackStateValue::Advertisement,
-            _ => PlaybackStateValue::Unknown,
-        }
-    }
-
-    /// Get string representation of the state
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            PlaybackStateValue::Stopped => "STOPPED",
-            PlaybackStateValue::BufferingBetween => "BUFFERING_BETWEEN",
-            PlaybackStateValue::Playing => "PLAYING",
-            PlaybackStateValue::Paused => "PAUSED",
-            PlaybackStateValue::Starting => "STARTING",
-            PlaybackStateValue::Ended => "ENDED",
-            PlaybackStateValue::Advertisement => "ADVERTISEMENT",
-            PlaybackStateValue::Unknown => "UNKNOWN",
-        }
-    }
-}
-
-// Convert between PlaybackStateValue and PlaybackStatus
-impl From<PlaybackStateValue> for PlaybackStatus {
-    fn from(value: PlaybackStateValue) -> Self {
-        match value {
-            PlaybackStateValue::Stopped => PlaybackStatus::Stopped,
-            PlaybackStateValue::BufferingBetween => PlaybackStatus::BufferingBetween,
-            PlaybackStateValue::Playing => PlaybackStatus::Playing,
-            PlaybackStateValue::Paused => PlaybackStatus::Paused,
-            PlaybackStateValue::Starting => PlaybackStatus::Starting,
-            PlaybackStateValue::Ended => PlaybackStatus::Ended,
-            PlaybackStateValue::Advertisement => PlaybackStatus::Advertisement,
-            PlaybackStateValue::Unknown => PlaybackStatus::Unknown,
-        }
-    }
-}
-
-impl From<PlaybackStatus> for PlaybackStateValue {
-    fn from(status: PlaybackStatus) -> Self {
-        match status {
-            PlaybackStatus::Stopped => PlaybackStateValue::Stopped,
-            PlaybackStatus::BufferingBetween => PlaybackStateValue::BufferingBetween,
-            PlaybackStatus::Playing => PlaybackStateValue::Playing,
-            PlaybackStatus::Paused => PlaybackStateValue::Paused,
-            PlaybackStatus::Starting => PlaybackStateValue::Starting,
-            PlaybackStatus::Ended => PlaybackStateValue::Ended,
-            PlaybackStatus::Advertisement => PlaybackStateValue::Advertisement,
-            PlaybackStatus::Unknown => PlaybackStateValue::Unknown,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlaybackState {
     #[serde(rename = "currentTime", default)]
@@ -341,59 +230,16 @@ pub struct PlaybackState {
 }
 
 impl PlaybackState {
-    // Legacy methods for backward compatibility
-
-    /// Get the parsed state value
-    pub fn state_value(&self) -> i32 {
-        <str as YoutubeValueParser>::parse_int(&self.state)
-    }
-
-    /// Get the parsed current time
-    pub fn current_time_value(&self) -> f64 {
-        self.current_time()
-    }
-
-    /// Get the parsed duration
-    pub fn duration_value(&self) -> f64 {
-        self.duration()
-    }
-
-    /// Get the parsed volume
-    pub fn volume_value(&self) -> i32 {
-        self.volume()
-    }
-
-    /// Get the parsed loaded time
-    pub fn loaded_time_value(&self) -> f64 {
-        self.loaded_time()
-    }
-
-    /// Get the parsed seekable start time
-    pub fn seekable_start_time_value(&self) -> f64 {
-        self.seekable_start_time()
-    }
-
-    /// Get the parsed seekable end time
-    pub fn seekable_end_time_value(&self) -> f64 {
-        self.seekable_end_time()
-    }
-
     /// Returns the state as a human-readable string
     pub fn state_name(&self) -> &'static str {
-        PlaybackStatus::from(self).as_str()
+        self.status().as_str()
     }
 }
 
 // Implement our traits for PlaybackState
 impl HasPlaybackState for PlaybackState {
     fn status(&self) -> PlaybackStatus {
-        PlaybackStatus::from_i32(self.state_value())
-    }
-}
-
-impl From<&PlaybackState> for PlaybackStatus {
-    fn from(state: &PlaybackState) -> Self {
-        PlaybackStatus::from_i32(<str as YoutubeValueParser>::parse_int(&state.state))
+        PlaybackStatus::from_i32(<str as YoutubeValueParser>::parse_int(&self.state))
     }
 }
 
@@ -457,38 +303,6 @@ pub struct NowPlaying {
 }
 
 impl NowPlaying {
-    // Legacy methods for backward compatibility
-
-    /// Get the parsed state value
-    pub fn state_value(&self) -> i32 {
-        <str as YoutubeValueParser>::parse_int(&self.state)
-    }
-
-    /// Get the parsed current time
-    pub fn current_time_value(&self) -> f64 {
-        self.current_time()
-    }
-
-    /// Get the parsed duration
-    pub fn duration_value(&self) -> f64 {
-        self.duration()
-    }
-
-    /// Get the parsed seekable start time
-    pub fn seekable_start_time_value(&self) -> f64 {
-        self.seekable_start_time()
-    }
-
-    /// Get the parsed seekable end time
-    pub fn seekable_end_time_value(&self) -> f64 {
-        self.seekable_end_time()
-    }
-
-    /// Get the parsed loaded time
-    pub fn loaded_time_value(&self) -> f64 {
-        self.loaded_time()
-    }
-
     /// Get the video history from mdxExpandedReceiverVideoIdList
     pub fn video_history(&self) -> Option<Vec<String>> {
         self.mdx_expanded_receiver_video_id_list
@@ -500,13 +314,7 @@ impl NowPlaying {
 // Implement our traits for NowPlaying
 impl HasPlaybackState for NowPlaying {
     fn status(&self) -> PlaybackStatus {
-        PlaybackStatus::from_i32(self.state_value())
-    }
-}
-
-impl From<&NowPlaying> for PlaybackStatus {
-    fn from(np: &NowPlaying) -> Self {
-        PlaybackStatus::from_i32(<str as YoutubeValueParser>::parse_int(&np.state))
+        PlaybackStatus::from_i32(<str as YoutubeValueParser>::parse_int(&self.state))
     }
 }
 

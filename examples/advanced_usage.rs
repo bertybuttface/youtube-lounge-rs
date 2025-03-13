@@ -5,7 +5,9 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use tokio::time::{sleep, Duration};
-use youtube_lounge_rs::{HasVolume, LoungeClient, LoungeEvent, PlaybackCommand, Screen};
+use youtube_lounge_rs::{
+    HasDuration, HasVolume, LoungeClient, LoungeEvent, PlaybackCommand, Screen,
+};
 
 // Structure to store authentication data for multiple screens
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -253,13 +255,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("  Video ID: {}", state.video_id);
                                 println!(
                                     "  Position: {:.2}/{:.2}",
-                                    state.current_time_value(),
-                                    state.duration_value()
+                                    state.current_time(),
+                                    state.duration()
                                 );
                                 println!("  State: {} ({})", state.state_name(), state.state);
                                 println!(
                                     "  Volume: {} - Muted: {}",
-                                    state.volume_value(),
+                                    state.volume(),
                                     state.is_muted()
                                 );
                                 if let Some(cpn) = &state.cpn {
@@ -269,8 +271,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             LoungeEvent::NowPlaying(now_playing) => {
                                 println!("[{}] Now playing:", screen_name_for_task);
                                 println!("  Video ID: {}", now_playing.video_id);
-                                println!("  Duration: {:.2}", now_playing.duration_value());
-                                println!("  Current time: {:.2}", now_playing.current_time_value());
+                                println!("  Duration: {:.2}", now_playing.duration());
+                                println!("  Current time: {:.2}", now_playing.current_time());
                                 if let Some(list_id) = &now_playing.list_id {
                                     println!("  Playlist: {}", list_id);
                                 }

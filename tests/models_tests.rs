@@ -1,6 +1,8 @@
 use serde_json::json;
 
-use youtube_lounge_rs::{Device, DeviceInfo, HasVolume, NowPlaying, PlaybackState, Screen};
+use youtube_lounge_rs::{
+    Device, DeviceInfo, HasDuration, HasPlaybackState, HasVolume, NowPlaying, PlaybackState, Screen,
+};
 
 // Test Screen model serialization/deserialization
 #[test]
@@ -55,15 +57,15 @@ fn test_playback_state_model() {
     assert_eq!(state.loaded_time, "60.0");
     assert_eq!(state.cpn, Some("test_cpn".to_string()));
 
-    // Test the value parsing methods
-    assert_eq!(state.state_value(), 1);
-    assert_eq!(state.current_time_value(), 42.5);
-    assert_eq!(state.duration_value(), 180.0);
-    assert_eq!(state.seekable_start_time_value(), 0.0);
-    assert_eq!(state.seekable_end_time_value(), 180.0);
-    assert_eq!(state.volume_value(), 50);
+    // Test the value parsing methods via traits
+    assert_eq!(state.status().to_i32(), 1);
+    assert_eq!(state.current_time(), 42.5);
+    assert_eq!(state.duration(), 180.0);
+    assert_eq!(state.seekable_start_time(), 0.0);
+    assert_eq!(state.seekable_end_time(), 180.0);
+    assert_eq!(state.volume(), 50);
     assert!(!state.is_muted());
-    assert_eq!(state.loaded_time_value(), 60.0);
+    assert_eq!(state.loaded_time(), 60.0);
 }
 
 // Test NowPlaying model serialization/deserialization
@@ -105,13 +107,13 @@ fn test_now_playing_model() {
         Some("abc123,def456".to_string())
     );
 
-    // Test the value parsing methods
-    assert_eq!(now_playing.state_value(), 1);
-    assert_eq!(now_playing.current_time_value(), 42.5);
-    assert_eq!(now_playing.duration_value(), 180.0);
-    assert_eq!(now_playing.seekable_start_time_value(), 0.0);
-    assert_eq!(now_playing.seekable_end_time_value(), 180.0);
-    assert_eq!(now_playing.loaded_time_value(), 60.0);
+    // Test the value parsing methods via traits
+    assert_eq!(now_playing.status().to_i32(), 1);
+    assert_eq!(now_playing.current_time(), 42.5);
+    assert_eq!(now_playing.duration(), 180.0);
+    assert_eq!(now_playing.seekable_start_time(), 0.0);
+    assert_eq!(now_playing.seekable_end_time(), 180.0);
+    assert_eq!(now_playing.loaded_time(), 60.0);
 
     // Test the video history parsing
     let video_history = now_playing.video_history().unwrap();
