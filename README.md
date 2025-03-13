@@ -2,13 +2,45 @@
 
 A Rust client library for the YouTube Lounge API, which allows controlling YouTube playback on TV devices and other connected displays.
 
+[![Crates.io](https://img.shields.io/crates/v/youtube-lounge-rs.svg)](https://crates.io/crates/youtube-lounge-rs)
+[![Docs.rs](https://docs.rs/youtube-lounge-rs/badge.svg)](https://docs.rs/youtube-lounge-rs)
+[![CI](https://github.com/bertybuttface/youtube-lounge-rs/workflows/CI/badge.svg)](https://github.com/bertybuttface/youtube-lounge-rs/actions/workflows/ci.yml)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Quick Start](#quick-start)
+  - [Pairing with a Screen](#pairing-with-a-screen)
+  - [Creating a Client](#creating-a-client)
+  - [Connecting to a Screen](#connecting-to-a-screen)
+  - [Receiving Events](#receiving-events)
+  - [Controlling Playback](#controlling-playback)
+  - [Disconnecting](#disconnecting)
+- [Examples](#examples)
+- [API Reference](#api-reference)
+  - [PlaybackSession Management](#playbacksession-management)
+  - [Debug Mode](#debug-mode)
+  - [PlaybackCommand](#playbackcommand)
+  - [LoungeEvent](#loungeevent)
+- [Release Process](#release-process)
+- [License](#license)
+
 ## Features
 
+### Core Features
 - Pair with YouTube-enabled TVs and devices using pairing codes
 - Control playback (play, pause, volume, seek, etc.)
 - Receive real-time playback status updates
 - Queue and manage videos for playback
+
+### Advanced Features
 - Handle reconnection and token refresh logic
+- Track playback session state with detailed information
+- Monitor playback state changes in real-time
+- Manage YouTube playlists
 
 ## Installation
 
@@ -19,12 +51,51 @@ Add this to your `Cargo.toml`:
 youtube-lounge-rs = "3.0.0"
 ```
 
-[![Crates.io](https://img.shields.io/crates/v/youtube-lounge-rs.svg)](https://crates.io/crates/youtube-lounge-rs)
-[![Docs.rs](https://docs.rs/youtube-lounge-rs/badge.svg)](https://docs.rs/youtube-lounge-rs)
-[![CI](https://github.com/bertybuttface/youtube-lounge-rs/workflows/CI/badge.svg)](https://github.com/bertybuttface/youtube-lounge-rs/actions/workflows/ci.yml)
-[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
+### Dependencies
+
+This library requires:
+- Rust 1.56 or later
+- `tokio` for async runtime
+- `reqwest` for HTTP requests
+- Internet connectivity for YouTube API access
 
 ## Usage
+
+### Quick Start
+
+```rust
+use youtube_lounge_rs::{LoungeClient, PlaybackCommand};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Pair with a screen (TV) using a pairing code displayed on the device
+    let screen = LoungeClient::pair_with_screen("ABC123").await?;
+    
+    // 2. Create a client to control the screen
+    let mut client = LoungeClient::new(
+        &screen.screen_id,
+        &screen.lounge_token,
+        "My Rust Remote"
+    );
+    
+    // 3. Set up event handling
+    let mut rx = client.event_receiver();
+    let mut session_rx = client.session_receiver();
+    
+    // 4. Connect to the screen
+    client.connect().await?;
+    
+    // 5. Send commands to control playback
+    client.send_command(PlaybackCommand::set_playlist("dQw4w9WgXcQ".to_string())).await?;
+    client.send_command(PlaybackCommand::Pause).await?;
+    client.send_command(PlaybackCommand::Play).await?;
+    
+    // 6. Disconnect when done
+    client.disconnect().await?;
+    
+    Ok(())
+}
+```
 
 ### Pairing with a screen
 
@@ -160,23 +231,26 @@ client.disconnect().await?;
 
 ## Examples
 
+The library includes two example applications to help you understand its usage.
+
 ### Basic Usage Example
 
-The library includes a basic example that demonstrates the core functionality:
+A simple example that demonstrates the core functionality:
 
 ```bash
 cargo run --example basic_usage <your_pairing_code>
 ```
 
-This simple example shows:
+This example demonstrates:
 - Pairing with a screen
 - Connecting to the device
+- Creating event and session receivers
 - Sending commands (play, pause, seek, volume)
 - Receiving and handling events
 
 ### Advanced Example with Persistence
 
-The library also includes an advanced example with session persistence:
+A more comprehensive example with session persistence:
 
 ```bash
 # First time: pair with a screen
@@ -190,14 +264,19 @@ cargo run --example advanced_usage debug
 
 # Pair and enable debug mode
 cargo run --example advanced_usage pair <your_pairing_code> debug
+
+# Show help for all commands
+cargo run --example advanced_usage help
 ```
 
 Advanced example features:
 - **Persistent Authentication**: Stores screen information in a JSON file
-- **Multi-Device Support**: Can store and manage multiple paired screens
+- **Multiple Paired Screens**: Can store and manage multiple paired screens
 - **Command-Line Interface**: Supports different modes via command-line arguments
-- **Token Validation**: Automatically detects invalid/expired tokens
-- **Comprehensive Event Handling**: Displays all events received from the TV
+- **Token Refresh**: Automatically handles token refreshing and persistence
+- **Debug Mode**: Option to display raw JSON for all events
+- **Session Tracking**: Demonstrates all session query methods
+- **Comprehensive Event Handling**: Shows handling for all event types
 
 ## Release Process
 
@@ -231,7 +310,7 @@ The main client for interacting with the YouTube Lounge API.
 
 #### PlaybackSession Management
 
-The library provides a `PlaybackSession` tracking system that maintains the state of videos being played on connected devices. Unlike regular events which are transient, sessions persist and provide a consolidated view of the current state:
+The library provides a `PlaybackSession` tracking system that maintains the state of videos being played on a connected device. Unlike regular events which are transient, sessions persist and provide a consolidated view of the current playback state:
 
 ```rust
 // Get a receiver for session updates
@@ -255,15 +334,20 @@ tokio::spawn(async move {
     }
 });
 
-// Query session information
-let all_sessions = client.get_all_sessions();
+// Get the current session (most recent)
 if let Some(current) = client.get_current_session() {
-    println!("Currently playing: {}", current.video_id.unwrap_or_default());
+    println!("Current session: {}", current.video_id.unwrap_or_default());
+    println!("State: {}", current.state_name());
+    println!("Progress: {:.1}%", current.progress_percentage());
 }
 
-// Find session for a specific device
-if let Some(session) = client.get_session_for_device("device_id") {
-    println!("Device is playing: {}", session.video_id.unwrap_or_default());
+// Check session state with convenience methods
+if client.has_playing_session() {
+    println!("There is a video currently playing");
+}
+
+if client.has_session_with_video_id("VIDEO_ID") {
+    println!("Found session for the specific video");
 }
 
 // Find a session by its CPN (Client Playback Nonce)
@@ -272,7 +356,7 @@ if let Some(session) = client.get_session_by_cpn("some-cpn-value") {
 }
 ```
 
-Sessions provide a more reliable way to track playback state and maintain continuity between events, especially useful for multi-device setups or applications that need to maintain playback history.
+Sessions provide a more reliable way to track playback state and maintain continuity between events, especially useful for applications that need to maintain playback state and history information. The session is updated automatically as events arrive from the device.
 
 #### Debug Mode
 
