@@ -1,6 +1,6 @@
 use std::error::Error;
 use tokio::time::{sleep, Duration};
-use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand};
+use youtube_lounge_rs::{HasPlaybackState, LoungeClient, LoungeEvent, PlaybackCommand};
 
 /// A basic example showing how to pair with a screen, connect, and control playback
 #[tokio::main]
