@@ -16,7 +16,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-youtube-lounge-rs = "0.1.0"
+youtube-lounge-rs = "3.0.0"
 ```
 
 [![Crates.io](https://img.shields.io/crates/v/youtube-lounge-rs.svg)](https://crates.io/crates/youtube-lounge-rs)
