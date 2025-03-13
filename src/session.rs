@@ -183,14 +183,8 @@ impl PlaybackSessionManager {
         None
     }
 
-    /// Get session for device - returns current session if device ID matches
-    pub fn get_session_for_device(&self, device_id: &str) -> Option<PlaybackSession> {
-        let manager_device_id = self.device_id.lock().unwrap().clone();
-        if manager_device_id == device_id {
-            return self.get_current_session();
-        }
-        None
-    }
+    // We no longer need get_session_for_device as each session manager
+    // is associated with exactly one device
 
     /// Get sessions by playback status - returns at most one session
     pub fn get_sessions_by_status(&self, status: PlaybackStatus) -> Vec<PlaybackSession> {

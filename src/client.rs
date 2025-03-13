@@ -299,10 +299,8 @@ impl LoungeClient {
         self.session_manager.get_session_by_cpn(cpn)
     }
 
-    // Get session by device ID through list_id mapping
-    pub fn get_session_for_device(&self, device_id: &str) -> Option<PlaybackSession> {
-        self.session_manager.get_session_for_device(device_id)
-    }
+    // The device_id() method provides the current device ID,
+    // And get_current_session() returns the session for this device
 
     // Get most recent session
     pub fn get_current_session(&self) -> Option<PlaybackSession> {
