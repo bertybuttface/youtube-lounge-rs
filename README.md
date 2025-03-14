@@ -1,6 +1,6 @@
 # YouTube Lounge API Client
 
-A Rust client library for the YouTube Lounge API, which allows controlling YouTube playback on TV devices and other connected displays.
+A lightweight Rust client library for the YouTube Lounge API, which allows controlling YouTube playback on TV devices and other connected displays.
 
 [![Crates.io](https://img.shields.io/crates/v/youtube-lounge-rs.svg)](https://crates.io/crates/youtube-lounge-rs)
 [![Docs.rs](https://docs.rs/youtube-lounge-rs/badge.svg)](https://docs.rs/youtube-lounge-rs)
@@ -21,26 +21,18 @@ A Rust client library for the YouTube Lounge API, which allows controlling YouTu
   - [Disconnecting](#disconnecting)
 - [Examples](#examples)
 - [API Reference](#api-reference)
-  - [PlaybackSession Management](#playbacksession-management)
-  - [Debug Mode](#debug-mode)
-  - [PlaybackCommand](#playbackcommand)
-  - [LoungeEvent](#loungeevent)
 - [Release Process](#release-process)
 - [License](#license)
 
 ## Features
 
-### Core Features
 - Pair with YouTube-enabled TVs and devices using pairing codes
 - Control playback (play, pause, volume, seek, etc.)
 - Receive real-time playback status updates
 - Queue and manage videos for playback
-
-### Advanced Features
-- Handle reconnection and token refresh logic
-- Track playback session state with detailed information
-- Monitor playback state changes in real-time
-- Manage YouTube playlists
+- Debug mode for inspecting raw event data
+- Automatic token refresh for persistent sessions
+- Lightweight and simple API with minimal dependencies
 
 ## Installation
 
@@ -79,14 +71,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     
     // 3. Set up event handling
-    let mut rx = client.event_receiver();
-    let mut session_rx = client.session_receiver();
+    let mut event_rx = client.event_receiver();
     
     // 4. Connect to the screen
     client.connect().await?;
     
     // 5. Send commands to control playback
-    client.send_command(PlaybackCommand::set_playlist("dQw4w9WgXcQ".to_string())).await?;
+    client.send_command_with_refresh(
+        PlaybackCommand::set_playlist("dQw4w9WgXcQ".to_string())
+    ).await?;
     client.send_command(PlaybackCommand::Pause).await?;
     client.send_command(PlaybackCommand::Play).await?;
     
@@ -107,10 +100,19 @@ println!("Paired with: {}", screen.name.unwrap_or_default());
 ### Creating a client
 
 ```rust
+// Basic client with auto-generated device ID
 let client = LoungeClient::new(
     &screen.screen_id,
     &screen.lounge_token,
     "My Rust Remote"
+);
+
+// Client with persistent device ID
+let client = LoungeClient::with_device_id(
+    &screen.screen_id,
+    &screen.lounge_token,
+    "My Rust Remote",
+    "custom-device-id-123"
 );
 ```
 
@@ -122,6 +124,11 @@ if client.check_screen_availability().await? {
     // Connect to the screen
     client.connect().await?;
 }
+
+// With automatic token refresh
+if client.check_screen_availability_with_refresh().await? {
+    client.connect().await?;
+}
 ```
 
 ### Receiving events
@@ -130,51 +137,67 @@ if client.check_screen_availability().await? {
 let mut rx = client.event_receiver();
 
 // Process events in a loop
-while let Some(event) = rx.recv().await {
-    match event {
-        LoungeEvent::StateChange(state) => {
-            println!("Playback state: {}", state.state);
-        },
-        LoungeEvent::NowPlaying(now_playing) => {
-            println!("Now playing: {}", now_playing.video_data.title);
-        },
-        LoungeEvent::ScreenDisconnected => {
-            println!("Screen disconnected");
-            break;
-        },
-        LoungeEvent::AdStateChange(ad_state) => {
-            println!("Ad playing. Content video: {}", ad_state.content_video_id);
-            println!("Skip enabled: {}", ad_state.is_skip_enabled);
-        },
-        LoungeEvent::SubtitlesTrackChanged(track) => {
-            println!("Subtitles track changed for video: {}", track.video_id);
-        },
-        LoungeEvent::AutoplayModeChanged(mode) => {
-            println!("Autoplay mode changed to: {}", mode.autoplay_mode);
-        },
-        LoungeEvent::HasPreviousNextChanged(nav) => {
-            println!("Navigation changed - Next: {}, Previous: {}", 
-                nav.has_next, nav.has_previous);
-        },
-        LoungeEvent::VideoQualityChanged(quality) => {
-            println!("Video quality changed to {} for {}", 
-                quality.quality_level, quality.video_id);
-        },
-        LoungeEvent::AudioTrackChanged(audio) => {
-            println!("Audio track changed to {} for {}", 
-                audio.audio_track_id, audio.video_id);
-        },
-        LoungeEvent::PlaylistModified(playlist) => {
-            println!("Playlist modified: Video {} in list {}", 
-                playlist.video_id, playlist.list_id);
-        },
-        LoungeEvent::AutoplayUpNext(next) => {
-            println!("Autoplay up next: {}", next.video_id);
-        },
-        // Handle other events...
-        _ => {}
+tokio::spawn(async move {
+    while let Ok(event) = rx.recv().await {
+        match event {
+            LoungeEvent::StateChange(state) => {
+                println!("Playback state: {}", state.state);
+                println!("Current time: {}s", state.current_time);
+                println!("Duration: {}s", state.duration);
+            },
+            LoungeEvent::NowPlaying(now_playing) => {
+                println!("Now playing video: {}", now_playing.video_id);
+            },
+            LoungeEvent::PlaybackSession(session) => {
+                // This is a synthetic event that combines NowPlaying and StateChange
+                println!("Video: {}, Position: {}s / {}s", 
+                    session.video_id, session.current_time, session.duration);
+                println!("State: {}, List ID: {:?}", session.state, session.list_id);
+            },
+            LoungeEvent::ScreenDisconnected => {
+                println!("Screen disconnected");
+                break;
+            },
+            LoungeEvent::SessionEstablished => {
+                println!("Session established");
+            },
+            LoungeEvent::AdStateChange(ad_state) => {
+                println!("Ad playing. Content video: {}", ad_state.content_video_id);
+                println!("Skip enabled: {}", ad_state.is_skippable());
+            },
+            LoungeEvent::SubtitlesTrackChanged(track) => {
+                println!("Subtitles track changed for video: {}", track.video_id);
+            },
+            LoungeEvent::AutoplayModeChanged(mode) => {
+                println!("Autoplay mode changed to: {}", mode.autoplay_mode);
+            },
+            LoungeEvent::HasPreviousNextChanged(nav) => {
+                let has_next = <str as YoutubeValueParser>::parse_bool(&nav.has_next);
+                let has_prev = <str as YoutubeValueParser>::parse_bool(&nav.has_previous);
+                println!("Navigation changed - Next: {}, Previous: {}", has_next, has_prev);
+            },
+            LoungeEvent::VideoQualityChanged(quality) => {
+                println!("Video quality changed to {} for {}", 
+                    quality.quality_level, quality.video_id);
+            },
+            LoungeEvent::AudioTrackChanged(audio) => {
+                println!("Audio track changed to {} for {}", 
+                    audio.audio_track_id, audio.video_id);
+            },
+            LoungeEvent::PlaylistModified(playlist) => {
+                println!("Playlist modified: Video {} in list {}", 
+                    playlist.video_id, playlist.list_id);
+            },
+            LoungeEvent::AutoplayUpNext(next) => {
+                println!("Autoplay up next: {}", next.video_id);
+            },
+            LoungeEvent::Unknown(event_info) => {
+                println!("Unknown event: {}", event_info);
+            },
+            _ => {}
+        }
     }
-}
+});
 ```
 
 ### Controlling playback
@@ -221,6 +244,9 @@ client.send_command(PlaybackCommand::SetVolume {
 
 // Skip to the next video in a playlist
 client.send_command(PlaybackCommand::Next).await?;
+
+// Use automatic token refresh with any command
+client.send_command_with_refresh(PlaybackCommand::Play).await?;
 ```
 
 ### Disconnecting
@@ -229,55 +255,170 @@ client.send_command(PlaybackCommand::Next).await?;
 client.disconnect().await?;
 ```
 
+## YouTube Event Behavior
+
+### NowPlaying Events
+
+The `NowPlaying` event can appear in several different forms during playback:
+
+1. **Initial playlist notification**: Contains only `listId` but no video information
+   ```json
+   {"listId":"RQHOSZo8I72PfncOk8TEWlvzMbJFs"}
+   ```
+
+2. **Initial video loading**: Contains basic video information but no CPN yet
+   ```json
+   {"currentTime":"0","duration":"0","listId":"RQHOSZo8I72PfncOk8TEWlvzMbJFs",
+    "loadedTime":"0","state":"3","videoId":"dQw4w9WgXcQ"}
+   ```
+
+3. **Complete video information**: Contains full information including CPN
+   ```json
+   {"cpn":"pNuc5Oktxo2_Odby","currentTime":"0.716","duration":"212.061",
+    "listId":"RQHOSZo8I72PfncOk8TEWlvzMbJFs","loadedTime":"14.68",
+    "seekableEndTime":"212.04","seekableStartTime":"0","state":"1",
+    "videoId":"dQw4w9WgXcQ"}
+   ```
+
+### StateChange Events
+
+The `StateChange` events contain information about the playback state but do not include the video ID or video metadata. They must be matched with NowPlaying events using the CPN (Client Playback Nonce) to associate them with a specific video.
+
+```json
+{"cpn":"pNuc5Oktxo2_Odby","currentTime":"30.248","duration":"212.061",
+ "loadedTime":"42.32","seekableEndTime":"212.04","seekableStartTime":"0","state":"1"}
+```
+
+StateChange events contain playback information only - timestamps, durations, and state codes (where "1" = playing, "2" = paused, "3" = buffering).
+
+### PlaybackSession Events
+
+This library provides a synthetic `PlaybackSession` event that combines data from both `NowPlaying` and `StateChange` events for the same video (matched by their Client Playback Nonce or CPN). This provides you with a more complete picture of the current playback state:
+
+```rust
+LoungeEvent::PlaybackSession(session) => {
+    println!("Video: {}", session.video_id);
+    println!("Position: {}s / {}s", session.current_time, session.duration);
+    println!("State: {}", session.state); // "1" = playing, "2" = paused, "3" = buffering
+    
+    // List ID is available if the video is part of a playlist
+    if let Some(list_id) = &session.list_id {
+        println!("Part of playlist: {}", list_id);
+    }
+}
+```
+
+Note that the `video_data` field (containing title, author, etc.) is `None` by default, as this requires a separate API call to populate.
+
 ## Examples
 
-The library includes two example applications to help you understand its usage.
+The library includes a basic example application to help you understand its usage.
 
-### Basic Usage Example
-
-A simple example that demonstrates the core functionality:
+### Basic Example
 
 ```bash
-cargo run --example basic_usage <your_pairing_code>
+cargo run --example basic_example <your_pairing_code>
 ```
 
 This example demonstrates:
 - Pairing with a screen
 - Connecting to the device
-- Creating event and session receivers
+- Creating event receiver
 - Sending commands (play, pause, seek, volume)
 - Receiving and handling events
 
-### Advanced Example with Persistence
+### Debug Mode
 
-A more comprehensive example with session persistence:
+You can enable debug mode to see the raw JSON payload of all events:
 
-```bash
-# First time: pair with a screen
-cargo run --example advanced_usage pair <your_pairing_code>
+```rust
+// Enable debug mode to see all event data
+client.enable_debug_mode();
 
-# Subsequent runs: reuse stored authentication
-cargo run --example advanced_usage
-
-# Run with debug mode to see raw event JSON
-cargo run --example advanced_usage debug
-
-# Pair and enable debug mode
-cargo run --example advanced_usage pair <your_pairing_code> debug
-
-# Show help for all commands
-cargo run --example advanced_usage help
+// Later, when done debugging
+client.disable_debug_mode();
 ```
 
-Advanced example features:
-- **Persistent Authentication**: Stores screen information in a JSON file
-- **Multi-Screen Control**: Connects to and controls multiple paired screens simultaneously
-- **Command-Line Interface**: Supports different modes via command-line arguments
-- **Token Refresh**: Automatically handles token refreshing and persistence
-- **Debug Mode**: Option to display raw JSON for all events
-- **Parallel Commands**: Sends commands to multiple screens in parallel
-- **Session Tracking**: Demonstrates all session query methods
-- **Comprehensive Event Handling**: Shows handling for all event types
+## API Reference
+
+The library provides the following main components:
+
+### `LoungeClient`
+
+The main client for interacting with the YouTube Lounge API.
+
+#### Methods
+
+- `new(screen_id: &str, lounge_token: &str, device_name: &str) -> Self`
+- `with_device_id(screen_id: &str, lounge_token: &str, device_name: &str, device_id: &str) -> Self`
+- `device_id(&self) -> &str`
+- `event_receiver(&self) -> broadcast::Receiver<LoungeEvent>`
+- `enable_debug_mode(&mut self)`
+- `disable_debug_mode(&mut self)`
+- `pair_with_screen(pairing_code: &str) -> Result<Screen, LoungeError>`
+- `refresh_lounge_token(screen_id: &str) -> Result<Screen, LoungeError>`
+- `check_screen_availability(&self) -> Result<bool, LoungeError>`
+- `check_screen_availability_with_refresh(&mut self) -> Result<bool, LoungeError>`
+- `connect(&mut self) -> Result<(), LoungeError>`
+- `send_command(&mut self, command: PlaybackCommand) -> Result<(), LoungeError>`
+- `send_command_with_refresh(&mut self, command: PlaybackCommand) -> Result<(), LoungeError>`
+- `disconnect(&mut self) -> Result<(), LoungeError>`
+- `get_thumbnail_url(video_id: &str, thumbnail_idx: u8) -> String`
+
+### `PlaybackCommand`
+
+Commands that can be sent to control playback:
+
+#### Basic Control Commands
+- `Play` - Resume playback
+- `Pause` - Pause playback
+- `Next` - Skip to next video
+- `Previous` - Go to previous video
+- `SkipAd` - Skip current advertisement
+- `SeekTo { new_time: f64 }` - Seek to specific position
+- `SetAutoplayMode { autoplay_mode: String }` - Change autoplay settings
+- `SetVolume { volume: i32 }` - Set volume level (0-100)
+- `Mute` - Mute audio
+- `Unmute` - Unmute audio
+
+#### Content Commands
+- `SetPlaylist { ... }` - Play a video or playlist
+- `AddVideo { ... }` - Add a video to the queue
+
+#### Helper Methods
+- `set_playlist(video_id: String) -> Self`
+- `set_playlist_by_id(list_id: String) -> Self`
+- `set_playlist_with_index(list_id: String, index: i32) -> Self`
+- `add_video(video_id: String) -> Self`
+
+### `LoungeEvent`
+
+Events received from the YouTube Lounge API:
+
+- `StateChange(PlaybackState)`
+- `NowPlaying(NowPlaying)`
+- `LoungeStatus(Vec<Device>, Option<String>)`
+- `ScreenDisconnected`
+- `SessionEstablished`
+- `AdStateChange(AdState)`
+- `SubtitlesTrackChanged(SubtitlesTrackChanged)`
+- `AutoplayModeChanged(AutoplayModeChanged)`
+- `HasPreviousNextChanged(HasPreviousNextChanged)`
+- `VideoQualityChanged(VideoQualityChanged)`
+- `AudioTrackChanged(AudioTrackChanged)`
+- `PlaylistModified(PlaylistModified)`
+- `AutoplayUpNext(AutoplayUpNext)`
+- `VolumeChanged(VolumeChanged)`
+- `Unknown(String)`
+
+### `YoutubeValueParser`
+
+Utility trait for parsing YouTube API string values:
+
+- `parse_float(s: &str) -> f64`
+- `parse_int(s: &str) -> i32`
+- `parse_bool(s: &str) -> bool`
+- `parse_list(s: &str) -> Vec<String>`
 
 ## Release Process
 
@@ -300,147 +441,6 @@ This library follows semantic versioning and uses GitHub Actions for automated r
    - Runs tests, linting and code coverage
    - Publishes to crates.io
    - Creates a GitHub release with auto-generated changelog
-
-## API Reference
-
-The library provides the following main components:
-
-### `LoungeClient`
-
-The main client for interacting with the YouTube Lounge API.
-
-#### PlaybackSession Management
-
-The library provides a `PlaybackSession` tracking system that maintains the state of videos being played on a connected device. Unlike regular events which are transient, sessions persist and provide a consolidated view of the current playback state:
-
-```rust
-// Get a receiver for session updates
-let mut session_rx = client.session_receiver();
-
-// Process session updates in a separate task
-tokio::spawn(async move {
-    while let Ok(session) = session_rx.recv().await {
-        println!("Device ID: {}", session.device_id.as_deref().unwrap_or("Unknown"));
-        println!("Video: {}", session.video_id.as_deref().unwrap_or("Unknown"));
-        println!("Progress: {:.2}/{:.2} ({:.1}%)", 
-            session.current_time, 
-            session.duration,
-            session.progress_percentage());
-        println!("State: {}", session.state_name());
-        
-        // Sessions track playback history when available
-        if let Some(history) = &session.video_history {
-            println!("Video history: {} videos", history.len());
-        }
-    }
-});
-
-// Get the current session (most recent)
-if let Some(current) = client.get_current_session() {
-    println!("Current session: {}", current.video_id.unwrap_or_default());
-    println!("State: {}", current.state_name());
-    println!("Progress: {:.1}%", current.progress_percentage());
-}
-
-// Check session state with convenience methods
-if client.has_playing_session() {
-    println!("There is a video currently playing");
-}
-
-if client.has_session_with_video_id("VIDEO_ID") {
-    println!("Found session for the specific video");
-}
-
-// Find a session by its CPN (Client Playback Nonce)
-if let Some(session) = client.get_session_by_cpn("some-cpn-value") {
-    println!("Found session for video: {}", session.video_id.unwrap_or_default());
-}
-```
-
-Sessions provide a more reliable way to track playback state and maintain continuity between events, especially useful for applications that need to maintain playback state and history information. The session is updated automatically as events arrive from the device.
-
-#### Debug Mode
-
-You can enable debug mode to see the raw JSON payload of all events, which helps when inspecting for new or undocumented parameters:
-
-```rust
-// Enable debug mode to inspect all events and their raw JSON
-client.enable_debug_mode();
-
-// Later, when done debugging
-client.disable_debug_mode();
-```
-
-When debug mode is enabled, all events (including unknown ones) will print their full JSON payload to the console, allowing you to see any parameters that aren't currently captured in the model structures.
-
-### `PlaybackCommand`
-
-Commands that can be sent to control playback:
-
-#### Basic Control Commands
-- `Play` - Resume playback
-- `Pause` - Pause playback
-- `Next` - Skip to next video
-- `Previous` - Go to previous video
-- `SkipAd` - Skip current advertisement
-- `SeekTo { new_time: f64 }` - Seek to specific position
-- `SetAutoplayMode { autoplay_mode: String }` - Change autoplay settings
-- `SetVolume { volume: i32 }` - Set volume level (0-100)
-- `Mute` - Mute audio
-- `Unmute` - Unmute audio
-
-#### Content Commands
-
-**Play a single video:**
-```rust
-// Recommended approach
-PlaybackCommand::set_playlist("dQw4w9WgXcQ".to_string())
-
-// Full manual construction
-PlaybackCommand::SetPlaylist { 
-    video_id: "dQw4w9WgXcQ".to_string(),
-    current_index: Some(-1),
-    list_id: None,
-    current_time: Some(0.0),
-    audio_only: Some(false),
-    params: None,
-    player_params: None,
-}
-```
-
-**Play a YouTube playlist:**
-```rust
-// Play from beginning of playlist
-PlaybackCommand::set_playlist_by_id("PLxxxx".to_string())
-
-// Play specific video in playlist by index
-PlaybackCommand::set_playlist_with_index("PLxxxx".to_string(), 3)
-```
-
-**Add a video to queue:**
-```rust
-// Add to end of current queue
-PlaybackCommand::add_video("QH2-TGUlwu4".to_string())
-```
-
-### `LoungeEvent`
-
-Events received from the YouTube Lounge API:
-
-- `StateChange(PlaybackState)`
-- `NowPlaying(NowPlaying)`
-- `LoungeStatus(Vec<Device>)`
-- `ScreenDisconnected`
-- `SessionEstablished`
-- `AdStateChange(AdState)`
-- `SubtitlesTrackChanged(SubtitlesTrackChanged)`
-- `AutoplayModeChanged(AutoplayModeChanged)`
-- `HasPreviousNextChanged(HasPreviousNextChanged)`
-- `VideoQualityChanged(VideoQualityChanged)`
-- `AudioTrackChanged(AudioTrackChanged)`
-- `PlaylistModified(PlaylistModified)`
-- `AutoplayUpNext(AutoplayUpNext)`
-- `Unknown(String)`
 
 ## License
 
