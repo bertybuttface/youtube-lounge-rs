@@ -2,7 +2,7 @@ use bytes::BytesMut;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -837,8 +837,8 @@ impl LoungeClient {
                                     Ok(Some(message)) => {
                                         // We got a complete message
                                         debug_log!(
-                                            debug_mode, 
-                                            "Processing complete event message (size: {}) in real-time", 
+                                            debug_mode,
+                                            "Processing complete event message (size: {}) in real-time",
                                             message.len()
                                         );
 
@@ -1113,56 +1113,20 @@ impl LoungeClient {
 // Helper function to extract session IDs
 fn extract_session_ids(body: &[u8]) -> Result<(Option<String>, Option<String>), LoungeError> {
     let full_response = String::from_utf8_lossy(body).to_string();
-    let mut sid = None;
-    let mut gsessionid = None;
 
-    // Try to extract sid (session ID)
-    let c_marker = "[\"c\",\"";
-    if let Some(c_idx) = full_response.find(c_marker) {
-        let sid_start = c_idx + c_marker.len();
-        if let Some(sid_end) = full_response[sid_start..].find('\"') {
-            sid = Some(full_response[sid_start..sid_start + sid_end].to_string());
-        }
+    // Helper function to extract value between markers
+    fn extract_value(text: &str, marker: &str) -> Option<String> {
+        text.find(marker).and_then(|idx| {
+            let start = idx + marker.len();
+            text[start..]
+                .find('\"')
+                .map(|end_idx| text[start..start + end_idx].to_string())
+        })
     }
 
-    // Try to extract gsessionid
-    let s_marker = "[\"S\",\"";
-    if let Some(s_idx) = full_response.find(s_marker) {
-        let gsession_start = s_idx + s_marker.len();
-        if let Some(gsession_end) = full_response[gsession_start..].find('\"') {
-            gsessionid =
-                Some(full_response[gsession_start..gsession_start + gsession_end].to_string());
-        }
-    }
-
-    // Fallback to line-by-line parsing if the above fails
-    if sid.is_none() || gsessionid.is_none() {
-        let reader = BufReader::new(body);
-        for line in reader.lines() {
-            let line = line?;
-            if line.contains("[\"c\",\"") && sid.is_none() {
-                if let Some(start_idx) = line.find("[\"c\",\"") {
-                    let start = start_idx + 5;
-                    if let Some(end_idx) = line[start..].find('\"') {
-                        sid = Some(line[start..start + end_idx].to_string());
-                    }
-                }
-            }
-
-            if line.contains("[\"S\",\"") && gsessionid.is_none() {
-                if let Some(start_idx) = line.find("[\"S\",\"") {
-                    let start = start_idx + 5;
-                    if let Some(end_idx) = line[start..].find('\"') {
-                        gsessionid = Some(line[start..start + end_idx].to_string());
-                    }
-                }
-            }
-
-            if sid.is_some() && gsessionid.is_some() {
-                break;
-            }
-        }
-    }
+    // Extract sid and gsessionid
+    let sid = extract_value(&full_response, "[\"c\",\"");
+    let gsessionid = extract_value(&full_response, "[\"S\",\"");
 
     // Check if we found the session IDs
     if sid.is_none() || gsessionid.is_none() {
@@ -1200,24 +1164,10 @@ fn process_event_chunk(
         }
     }
 
-    // Helper macro for debug logging event payloads with timestamp
+    // Use the main debug_log macro for event logging
     macro_rules! debug_event {
         ($debug:expr, $event_type:expr, $payload:expr) => {
-            if $debug {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default();
-                let millis = now.as_millis() % 1000;
-                let secs = now.as_secs() % 60;
-                let mins = (now.as_secs() / 60) % 60;
-                let hrs = (now.as_secs() / 3600) % 24;
-
-                println!(
-                    "DEBUG [{}:{:02}:{:02}.{:03}] Event [{}] payload: {}",
-                    hrs, mins, secs, millis, $event_type, $payload
-                );
-                std::io::stdout().flush().unwrap_or_default();
-            }
+            debug_log!($debug, "Event [{}] payload: {}", $event_type, $payload);
         };
     }
 
