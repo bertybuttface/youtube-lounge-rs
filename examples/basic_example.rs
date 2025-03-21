@@ -152,8 +152,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         info!("[{}] Event handler task started", screen_id_clone);
 
         while let Ok(event) = receiver.recv().await {
-            let now = chrono::Local::now().format("%H:%M:%S.%3f");
-            debug!("[{}] Received event: {:?}", now, event);
+            debug!("Received event: {:?}", event);
             match event {
                 LoungeEvent::NowPlaying(np) => {
                     if let Some(video_data) = &np.video_data {
