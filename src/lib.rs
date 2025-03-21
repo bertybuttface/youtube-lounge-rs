@@ -1,3 +1,4 @@
+use bytes::BytesMut;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -6,6 +7,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
+use tokio_util::codec::Decoder;
 use uuid::Uuid;
 
 // Helper macro for debug logging with timestamp
@@ -51,6 +53,102 @@ pub enum LoungeError {
 
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
+}
+
+// Custom codec for YouTube Lounge API protocol
+// Handles the format: <text length>\n<message content>\n
+struct LoungeCodec {
+    // Current parsing state
+    state: LoungeCodecState,
+}
+
+enum LoungeCodecState {
+    // Waiting for a line containing the size
+    ReadingSize,
+    // Found size, now reading content
+    ReadingContent { expected_size: usize },
+}
+
+impl LoungeCodec {
+    fn new() -> Self {
+        Self {
+            state: LoungeCodecState::ReadingSize,
+        }
+    }
+}
+
+impl Decoder for LoungeCodec {
+    type Item = String;
+    type Error = std::io::Error;
+
+    fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        match &mut self.state {
+            LoungeCodecState::ReadingSize => {
+                // Look for a newline to delimit the size
+                if let Some(newline_pos) = buf.iter().position(|&b| b == b'\n') {
+                    // Extract the size line
+                    let line = buf.split_to(newline_pos + 1);
+
+                    // Parse the size
+                    let size_str = std::str::from_utf8(&line[..line.len() - 1]).map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid UTF-8 in size header",
+                        )
+                    })?;
+
+                    // Verify and parse the size
+                    let size_str = size_str.trim();
+                    if !size_str.chars().all(|c| c.is_ascii_digit()) {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Expected numeric size, got: {}", size_str),
+                        ));
+                    }
+
+                    let expected_size = size_str.parse::<usize>().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Invalid size: {}", size_str),
+                        )
+                    })?;
+
+                    // Transition to reading content state
+                    self.state = LoungeCodecState::ReadingContent { expected_size };
+
+                    // Continue with content parsing
+                    return self.decode(buf);
+                }
+
+                // Not enough data for a complete size line
+                Ok(None)
+            }
+
+            LoungeCodecState::ReadingContent { expected_size } => {
+                // Check if we have enough data
+                if buf.len() >= *expected_size {
+                    // We have a complete message
+                    let content = buf.split_to(*expected_size);
+
+                    // Convert to string
+                    let message = String::from_utf8(content.to_vec()).map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid UTF-8 in message content",
+                        )
+                    })?;
+
+                    // Reset state for next message
+                    self.state = LoungeCodecState::ReadingSize;
+
+                    return Ok(Some(message));
+                }
+
+                // Not enough data yet
+                Ok(None)
+            }
+        }
+    }
 }
 
 // Models
@@ -671,8 +769,6 @@ impl LoungeClient {
                 let response = match client
                     .get("https://www.youtube.com/api/lounge/bc/bind")
                     .query(&params)
-                    // Don't use send() which waits for the entire response
-                    // Instead, stream the response as it comes in
                     .send()
                     .await
                 {
@@ -717,77 +813,55 @@ impl LoungeClient {
                 // Stream the response body and process chunks as they arrive
                 debug_log!(debug_mode, "Processing streaming response");
 
+                // Use futures stream for processing
+                use futures::StreamExt;
+
                 // Create a streaming body from the response
                 let mut stream = response.bytes_stream();
 
-                // Buffer to accumulate data across stream chunks
-                let mut buffer = Vec::new();
-                let mut line_buffer = String::new();
-                let mut reading_size = true;
-                let mut expected_size = 0;
+                // Create our codec for parsing the protocol
+                let mut codec = LoungeCodec::new();
 
-                // Process the streaming response
-                use futures::StreamExt;
+                // Buffer for accumulating bytes from the stream
+                let mut buffer = BytesMut::with_capacity(16 * 1024); // 16KB initial capacity
 
                 while let Some(chunk_result) = stream.next().await {
                     match chunk_result {
                         Ok(chunk) => {
-                            // Add the new bytes to our buffer
+                            // Add new bytes to our buffer
                             buffer.extend_from_slice(&chunk);
 
-                            // Process any complete lines in the buffer
-                            let mut processed_bytes = 0;
-                            let mut start_idx = 0;
+                            // Process any complete messages in the buffer
+                            loop {
+                                match codec.decode(&mut buffer) {
+                                    Ok(Some(message)) => {
+                                        // We got a complete message
+                                        debug_log!(
+                                            debug_mode, 
+                                            "Processing complete event message (size: {}) in real-time", 
+                                            message.len()
+                                        );
 
-                            for i in 0..buffer.len() {
-                                // Look for newline characters
-                                if buffer[i] == b'\n' {
-                                    if let Ok(line) = std::str::from_utf8(&buffer[start_idx..i]) {
-                                        // Process complete line
-                                        if reading_size {
-                                            if line.trim().chars().all(|c| c.is_ascii_digit()) {
-                                                expected_size =
-                                                    line.trim().parse::<usize>().unwrap_or(0);
-                                                reading_size = false;
-                                                debug_log!(
-                                                    debug_mode,
-                                                    "Found chunk size: {}",
-                                                    expected_size
-                                                );
-                                            }
-                                        } else {
-                                            // Add to line accumulator
-                                            line_buffer.push_str(line);
-                                            line_buffer.push('\n');
-
-                                            // Check if we've reached the expected size
-                                            if line_buffer.len() >= expected_size {
-                                                debug_log!(debug_mode, "Processing complete event chunk (size: {}) in real-time", line_buffer.len());
-                                                // Process the complete event chunk immediately as it arrives
-                                                // This is the key improvement - we process each chunk as soon as it's complete
-                                                // rather than waiting for the entire response to finish
-                                                process_event_chunk(
-                                                    &line_buffer,
-                                                    &mut session_state,
-                                                    &event_sender,
-                                                    debug_mode,
-                                                    &mut latest_now_playing,
-                                                );
-                                                line_buffer.clear();
-                                                reading_size = true;
-                                            }
-                                        }
+                                        // Process the event chunk
+                                        process_event_chunk(
+                                            &message,
+                                            &mut session_state,
+                                            &event_sender,
+                                            debug_mode,
+                                            &mut latest_now_playing,
+                                        );
                                     }
-
-                                    // Move past this line for next iteration
-                                    start_idx = i + 1;
-                                    processed_bytes = i + 1;
+                                    Ok(None) => {
+                                        // Need more data for a complete message
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        debug_log!(debug_mode, "Error decoding message: {}", e);
+                                        // Clear buffer to attempt recovery
+                                        buffer.clear();
+                                        break;
+                                    }
                                 }
-                            }
-
-                            // Remove processed bytes from buffer
-                            if processed_bytes > 0 {
-                                buffer.drain(0..processed_bytes);
                             }
                         }
                         Err(e) => {
