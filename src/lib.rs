@@ -2,33 +2,13 @@ use bytes::BytesMut;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tokio_util::codec::Decoder;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-
-// Helper macro for debug logging with timestamp
-macro_rules! debug_log {
-    ($debug_mode:expr, $($arg:tt)*) => {
-        if $debug_mode {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default();
-            let millis = now.as_millis() % 1000;
-            let secs = now.as_secs() % 60;
-            let mins = (now.as_secs() / 60) % 60;
-            let hrs = (now.as_secs() / 3600) % 24;
-
-            println!("DEBUG [{}:{:02}:{:02}.{:03}]: {}",
-                hrs, mins, secs, millis,
-                format!($($arg)*));
-            std::io::stdout().flush().unwrap_or_default();
-        }
-    };
-}
 
 // Basic error handling with thiserror
 #[derive(Error, Debug)]
@@ -516,6 +496,37 @@ impl SessionState {
     }
 }
 
+/// The main client for interacting with the YouTube Lounge API.
+///
+/// This client enables controlling YouTube playback on TV devices through
+/// the YouTube Lounge API protocol. It handles pairing, authentication,
+/// session management, and sending commands to control playback.
+///
+/// # Logging
+///
+/// This library uses the `tracing` crate for logging. To enable logs, you'll need to
+/// initialize a tracing subscriber in your application.
+///
+/// Example using `tracing_subscriber`:
+/// ```no_run
+/// use tracing::Level;
+/// use tracing_subscriber::FmtSubscriber;
+///
+/// // Create a subscriber with the desired log level
+/// let subscriber = FmtSubscriber::builder()
+///     .with_max_level(Level::DEBUG) // Set to DEBUG, INFO, WARN, or ERROR
+///     .finish();
+///
+/// // Initialize the global subscriber
+/// tracing::subscriber::set_global_default(subscriber)
+///     .expect("Failed to set tracing subscriber");
+/// ```
+///
+/// The log levels control what information is displayed:
+/// - `DEBUG`: Shows detailed information about network requests, message parsing, etc.
+/// - `INFO`: Shows high-level operations and successful connections
+/// - `WARN`: Shows warnings and non-critical errors
+/// - `ERROR`: Shows critical failures and error conditions
 pub struct LoungeClient {
     client: Client,
     device_id: String,
@@ -525,7 +536,6 @@ pub struct LoungeClient {
     session_state: SessionState,
     event_sender: broadcast::Sender<LoungeEvent>,
     connected: bool,
-    debug_mode: bool,
     // Track latest NowPlaying with CPN for PlaybackSession generation
     latest_now_playing: Option<NowPlaying>,
 }
@@ -536,6 +546,8 @@ impl LoungeClient {
         let device_id = Uuid::new_v4().to_string();
         let (event_tx, _) = broadcast::channel(100);
 
+        debug!("Creating new LoungeClient with screen_id: {}", screen_id);
+
         Self {
             client,
             device_id,
@@ -545,7 +557,6 @@ impl LoungeClient {
             session_state: SessionState::new(),
             event_sender: event_tx,
             connected: false,
-            debug_mode: false,
             latest_now_playing: None,
         }
     }
@@ -559,6 +570,11 @@ impl LoungeClient {
         let client = Client::new();
         let (event_tx, _) = broadcast::channel(100);
 
+        debug!(
+            "Creating LoungeClient with existing device_id: {}",
+            device_id
+        );
+
         Self {
             client,
             device_id: device_id.to_string(),
@@ -568,19 +584,11 @@ impl LoungeClient {
             session_state: SessionState::new(),
             event_sender: event_tx,
             connected: false,
-            debug_mode: false,
             latest_now_playing: None,
         }
     }
 
-    /// Enable debug mode to get more verbose logging
-    pub fn enable_debug_mode(&mut self) {
-        self.debug_mode = true;
-    }
-
-    pub fn disable_debug_mode(&mut self) {
-        self.debug_mode = false;
-    }
+    // Debug mode methods removed in favor of using the standard tracing level system
 
     pub fn device_id(&self) -> &str {
         &self.device_id
@@ -590,8 +598,9 @@ impl LoungeClient {
         self.event_sender.subscribe()
     }
 
-    // Static method for pairing
+    /// Pair with a screen using a pairing code displayed on the TV
     pub async fn pair_with_screen(pairing_code: &str) -> Result<Screen, LoungeError> {
+        info!("Pairing with screen using code: {}", pairing_code);
         let client = Client::new();
         let params = [("pairing_code", pairing_code)];
 
@@ -602,18 +611,26 @@ impl LoungeClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(LoungeError::InvalidResponse(format!(
-                "Failed to pair with screen: {}",
-                response.status()
-            )));
+            let error_msg = format!("Failed to pair with screen: {}", response.status());
+            error!("{}", error_msg);
+            return Err(LoungeError::InvalidResponse(error_msg));
         }
 
         let screen_response = response.json::<ScreenResponse>().await?;
+        info!(
+            "Successfully paired with screen: {}",
+            screen_response
+                .screen
+                .name
+                .as_deref()
+                .unwrap_or("<unnamed>")
+        );
         Ok(screen_response.screen)
     }
 
-    // Refresh lounge token
+    /// Refresh the lounge token for a screen
     pub async fn refresh_lounge_token(screen_id: &str) -> Result<Screen, LoungeError> {
+        info!("Refreshing lounge token for screen_id: {}", screen_id);
         let client = Client::new();
         let params = [("screen_ids", screen_id)];
 
@@ -624,23 +641,34 @@ impl LoungeClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(LoungeError::InvalidResponse(format!(
-                "Failed to refresh token: {}",
-                response.status()
-            )));
+            let error_msg = format!("Failed to refresh token: {}", response.status());
+            error!("{}", error_msg);
+            return Err(LoungeError::InvalidResponse(error_msg));
         }
 
         let screens_response = response.json::<ScreensResponse>().await?;
 
-        screens_response
+        let screen = screens_response
             .screens
             .into_iter()
             .next()
-            .ok_or_else(|| LoungeError::InvalidResponse("No screens returned".to_string()))
+            .ok_or_else(|| LoungeError::InvalidResponse("No screens returned".to_string()))?;
+
+        debug!(
+            "Token refreshed successfully for screen: {}",
+            screen.name.as_deref().unwrap_or("<unnamed>")
+        );
+
+        Ok(screen)
     }
 
-    // Check screen availability
+    /// Check if a screen is available using the current lounge token
     pub async fn check_screen_availability(&self) -> Result<bool, LoungeError> {
+        debug!(
+            "Checking screen availability for screen_id: {}",
+            self.screen_id
+        );
+
         let params = [("lounge_token", &self.lounge_token)];
 
         let response = self
@@ -651,28 +679,36 @@ impl LoungeClient {
             .await?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            warn!("Token expired for screen_id: {}", self.screen_id);
             return Err(LoungeError::TokenExpired);
         }
 
-        Ok(response.status().is_success())
+        let available = response.status().is_success();
+        debug!("Screen availability: {}", available);
+
+        Ok(available)
     }
 
-    // Refresh token and retry
+    /// Check screen availability with automatic token refresh if needed
     pub async fn check_screen_availability_with_refresh(&mut self) -> Result<bool, LoungeError> {
         match self.check_screen_availability().await {
             Ok(available) => Ok(available),
             Err(LoungeError::TokenExpired) => {
                 // Refresh token and retry
+                info!("Refreshing expired token for screen_id: {}", self.screen_id);
                 let screen = Self::refresh_lounge_token(&self.screen_id).await?;
                 self.lounge_token = screen.lounge_token;
+                debug!("Token refreshed, checking availability again");
                 self.check_screen_availability().await
             }
             Err(e) => Err(e),
         }
     }
 
-    // Connect to the screen
+    /// Connect to the screen and establish a session
     pub async fn connect(&mut self) -> Result<(), LoungeError> {
+        info!("Connecting to screen: {}", self.screen_id);
+
         // Reset session state
         self.session_state = SessionState::new();
 
@@ -685,6 +721,7 @@ impl LoungeClient {
 
         // Build the connect form data
         let form_data = self.build_connect_form_data();
+        debug!("Sending initial connection request");
 
         let response = self
             .client
@@ -696,30 +733,41 @@ impl LoungeClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(LoungeError::InvalidResponse(format!(
-                "Failed to connect: {}",
-                response.status()
-            )));
+            let error_msg = format!("Failed to connect: {}", response.status());
+            error!("{}", error_msg);
+            return Err(LoungeError::InvalidResponse(error_msg));
         }
 
         let body = response.bytes().await?;
 
         // Extract session IDs
+        debug!("Extracting session IDs from response");
         let (sid, gsessionid) = extract_session_ids(&body)?;
 
         // Update session state
-        self.session_state.sid = sid;
-        self.session_state.gsessionid = gsessionid;
+        self.session_state.sid = sid.clone();
+        self.session_state.gsessionid = gsessionid.clone();
         self.connected = true;
+
+        debug!(
+            "Session established with SID: {}",
+            sid.as_deref().unwrap_or("<none>")
+        );
 
         // Send session established event
         if self.event_sender.receiver_count() > 0 {
+            debug!(
+                "Sending SessionEstablished event to {} receiver(s)",
+                self.event_sender.receiver_count()
+            );
             let _ = self.event_sender.send(LoungeEvent::SessionEstablished);
         }
 
         // Start event subscription in background
+        info!("Starting event subscription");
         self.subscribe_to_events().await?;
 
+        info!("Successfully connected to screen: {}", self.screen_id);
         Ok(())
     }
 
@@ -730,16 +778,15 @@ impl LoungeClient {
         let lounge_token = self.lounge_token.clone();
         let event_sender = self.event_sender.clone();
         let mut session_state = self.session_state.clone();
-        let debug_mode = self.debug_mode;
         let mut latest_now_playing = self.latest_now_playing.clone();
 
         tokio::spawn(async move {
-            debug_log!(debug_mode, "Starting event subscriber task");
+            debug!("Starting event subscriber task");
 
             loop {
                 // Break if invalid session
                 if session_state.sid.is_none() || session_state.gsessionid.is_none() {
-                    debug_log!(debug_mode, "Session invalid, stopping event subscriber");
+                    debug!("Session invalid, stopping event subscriber");
                     break;
                 }
 
@@ -765,7 +812,7 @@ impl LoungeClient {
                 }
 
                 // Make the subscription request with streaming enabled
-                debug_log!(debug_mode, "Sending event subscription request");
+                debug!("Sending event subscription request");
                 let response = match client
                     .get("https://www.youtube.com/api/lounge/bc/bind")
                     .query(&params)
@@ -774,7 +821,7 @@ impl LoungeClient {
                 {
                     Ok(res) => res,
                     Err(e) => {
-                        debug_log!(debug_mode, "Subscription request failed: {}", e);
+                        debug!(error = %e, "Subscription request failed");
                         sleep(Duration::from_secs(5)).await;
                         continue;
                     }
@@ -783,17 +830,17 @@ impl LoungeClient {
                 // Check for terminal errors
                 match response.status().as_u16() {
                     400 => {
-                        debug_log!(debug_mode, "Received 400 Bad Request, screen disconnected");
+                        debug!("Received 400 Bad Request, screen disconnected");
                         let _ = event_sender.send(LoungeEvent::ScreenDisconnected);
                         break;
                     }
                     401 => {
-                        debug_log!(debug_mode, "Received 401 Unauthorized, screen disconnected");
+                        debug!("Received 401 Unauthorized, screen disconnected");
                         let _ = event_sender.send(LoungeEvent::ScreenDisconnected);
                         break;
                     }
                     410 => {
-                        debug_log!(debug_mode, "Received 410 Gone, screen disconnected");
+                        debug!("Received 410 Gone, screen disconnected");
                         let _ = event_sender.send(LoungeEvent::ScreenDisconnected);
                         break;
                     }
@@ -801,17 +848,13 @@ impl LoungeClient {
                 }
 
                 if !response.status().is_success() {
-                    debug_log!(
-                        debug_mode,
-                        "Received unsuccessful status: {}",
-                        response.status()
-                    );
+                    debug!(status = %response.status(), "Received unsuccessful status");
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }
 
                 // Stream the response body and process chunks as they arrive
-                debug_log!(debug_mode, "Processing streaming response");
+                debug!("Processing streaming response");
 
                 // Use futures stream for processing
                 use futures::StreamExt;
@@ -836,10 +879,9 @@ impl LoungeClient {
                                 match codec.decode(&mut buffer) {
                                     Ok(Some(message)) => {
                                         // We got a complete message
-                                        debug_log!(
-                                            debug_mode,
-                                            "Processing complete event message (size: {}) in real-time",
-                                            message.len()
+                                        debug!(
+                                            size = message.len(),
+                                            "Processing complete event message in real-time"
                                         );
 
                                         // Process the event chunk
@@ -847,7 +889,6 @@ impl LoungeClient {
                                             &message,
                                             &mut session_state,
                                             &event_sender,
-                                            debug_mode,
                                             &mut latest_now_playing,
                                         );
                                     }
@@ -856,7 +897,7 @@ impl LoungeClient {
                                         break;
                                     }
                                     Err(e) => {
-                                        debug_log!(debug_mode, "Error decoding message: {}", e);
+                                        debug!(error = %e, "Error decoding message");
                                         // Clear buffer to attempt recovery
                                         buffer.clear();
                                         break;
@@ -865,13 +906,13 @@ impl LoungeClient {
                             }
                         }
                         Err(e) => {
-                            debug_log!(debug_mode, "Error reading stream chunk: {}", e);
+                            debug!(error = %e, "Error reading stream chunk");
                             break;
                         }
                     }
                 }
 
-                debug_log!(debug_mode, "Stream ended, reconnecting after delay");
+                debug!("Stream ended, reconnecting after delay");
 
                 // Wait a short time before reconnecting
                 sleep(Duration::from_secs(1)).await;
@@ -881,14 +922,16 @@ impl LoungeClient {
         Ok(())
     }
 
-    // Send a command to the screen
+    /// Send a playback command to the screen
     pub async fn send_command(&mut self, command: PlaybackCommand) -> Result<(), LoungeError> {
         if !self.connected {
+            warn!("Attempted to send command while not connected");
             return Err(LoungeError::ConnectionClosed);
         }
 
         // Check if session is valid
         if self.session_state.sid.is_none() || self.session_state.gsessionid.is_none() {
+            warn!("Attempted to send command with expired session");
             return Err(LoungeError::SessionExpired);
         }
 
@@ -901,6 +944,10 @@ impl LoungeClient {
         let ofs = self.session_state.increment_offset();
 
         let command_name = command.name();
+        debug!(
+            "Sending command: {} (RID: {}, offset: {})",
+            command_name, rid, ofs
+        );
 
         // Prepare base parameters
         let params = [
@@ -979,6 +1026,7 @@ impl LoungeClient {
         }
 
         // Send the request
+        debug!("Sending command request to YouTube Lounge API");
         let response = self
             .client
             .post("https://www.youtube.com/api/lounge/bc/bind")
@@ -990,23 +1038,41 @@ impl LoungeClient {
 
         // Handle errors
         match response.status().as_u16() {
-            400 => return Err(LoungeError::SessionExpired),
-            401 => return Err(LoungeError::TokenExpired),
-            410 => return Err(LoungeError::ConnectionClosed),
+            400 => {
+                warn!(
+                    "Session expired (HTTP 400) when sending command: {}",
+                    command_name
+                );
+                return Err(LoungeError::SessionExpired);
+            }
+            401 => {
+                warn!(
+                    "Token expired (HTTP 401) when sending command: {}",
+                    command_name
+                );
+                return Err(LoungeError::TokenExpired);
+            }
+            410 => {
+                warn!(
+                    "Connection closed (HTTP 410) when sending command: {}",
+                    command_name
+                );
+                return Err(LoungeError::ConnectionClosed);
+            }
             _ => {}
         }
 
         if !response.status().is_success() {
-            return Err(LoungeError::InvalidResponse(format!(
-                "Command failed: {}",
-                response.status()
-            )));
+            let error_msg = format!("Command failed: {}", response.status());
+            error!("{} for command: {}", error_msg, command_name);
+            return Err(LoungeError::InvalidResponse(error_msg));
         }
 
+        debug!("Command sent successfully: {}", command_name);
         Ok(())
     }
 
-    // Send command with token refresh
+    /// Send a command with automatic token refresh if needed
     pub async fn send_command_with_refresh(
         &mut self,
         command: PlaybackCommand,
@@ -1015,22 +1081,28 @@ impl LoungeClient {
             Ok(()) => Ok(()),
             Err(LoungeError::TokenExpired) => {
                 // Refresh token and retry
+                info!("Refreshing token and retrying command: {}", command.name());
                 let screen = Self::refresh_lounge_token(&self.screen_id).await?;
                 self.lounge_token = screen.lounge_token;
+                debug!("Token refreshed, retrying command");
                 self.send_command(command).await
             }
             Err(e) => Err(e),
         }
     }
 
-    // Disconnect from the screen
+    /// Disconnect from the screen properly
     pub async fn disconnect(&mut self) -> Result<(), LoungeError> {
         if !self.connected {
+            debug!("Already disconnected, nothing to do");
             return Ok(());
         }
 
+        info!("Disconnecting from screen: {}", self.screen_id);
+
         // Check if session is valid
         if self.session_state.sid.is_none() || self.session_state.gsessionid.is_none() {
+            warn!("No valid session to disconnect, marking as disconnected");
             self.connected = false;
             return Ok(());
         }
@@ -1056,8 +1128,10 @@ impl LoungeClient {
         // Build terminate form data
         let form_data = "ui=&TYPE=terminate&clientDisconnectReason=MDX_SESSION_DISCONNECT_REASON_DISCONNECTED_BY_USER";
 
+        debug!("Sending disconnect request to YouTube Lounge API");
+
         // Send disconnect request
-        let _ = self
+        let res = self
             .client
             .post("https://www.youtube.com/api/lounge/bc/bind")
             .query(&params)
@@ -1066,10 +1140,16 @@ impl LoungeClient {
             .send()
             .await;
 
+        if let Err(e) = res {
+            warn!("Error sending disconnect request: {}", e);
+        }
+
         // Wait a brief moment before returning
+        debug!("Waiting for disconnect to complete");
         sleep(Duration::from_millis(300)).await;
 
         self.connected = false;
+        info!("Successfully disconnected from screen: {}", self.screen_id);
         Ok(())
     }
 
@@ -1143,7 +1223,6 @@ fn process_event_chunk(
     chunk: &str,
     session_state: &mut SessionState,
     sender: &broadcast::Sender<LoungeEvent>,
-    debug_mode: bool,
     latest_now_playing: &mut Option<NowPlaying>,
 ) {
     // Helper function for deserializing with error logging
@@ -1157,19 +1236,17 @@ fn process_event_chunk(
         match serde_json::from_value::<T>(payload.clone()) {
             Ok(result) => Ok(result),
             Err(e) => {
-                eprintln!("Failed to deserialize {} event: {}", event_type, e);
-                eprintln!("Raw payload: {}", payload);
+                error!(event_type = %event_type, error = %e, "Failed to deserialize event");
+                error!(payload = %payload, "Raw payload");
                 Err(e)
             }
         }
     }
 
-    // Use the main debug_log macro for event logging
-    macro_rules! debug_event {
-        ($debug:expr, $event_type:expr, $payload:expr) => {
-            debug_log!($debug, "Event [{}] payload: {}", $event_type, $payload);
-        };
-    }
+    // Helper for logging event details
+    let log_event = |event_type: &str, payload: &serde_json::Value| {
+        debug!(event_type = %event_type, payload = %payload, "Event received");
+    };
 
     if chunk.trim().is_empty() {
         return;
@@ -1203,7 +1280,7 @@ fn process_event_chunk(
             if let Some(event_type) = event_array.first().and_then(|t| t.as_str()) {
                 let payload = &event_array[1];
 
-                debug_event!(debug_mode, event_type, payload);
+                log_event(event_type, payload);
 
                 // Handle event by type
                 match event_type {
@@ -1224,9 +1301,10 @@ fn process_event_chunk(
                                         let _ = sender.send(LoungeEvent::PlaybackSession(session));
                                     } else if state.cpn.is_some() {
                                         // CPNs don't match - log a warning
-                                        eprintln!(
-                                            "StateChange CPN ({:?}) doesn't match NowPlaying CPN ({:?})",
-                                            state.cpn, np.cpn
+                                        warn!(
+                                            state_cpn = ?state.cpn,
+                                            np_cpn = ?np.cpn,
+                                            "StateChange CPN doesn't match NowPlaying CPN"
                                         );
                                     }
                                 }
@@ -1264,13 +1342,13 @@ fn process_event_chunk(
                                                         device.device_info = Some(info);
                                                     }
                                                     Err(e) => {
-                                                        eprintln!(
-                                                            "Failed to parse device_info: {}",
-                                                            e
+                                                        error!(
+                                                            error = %e,
+                                                            "Failed to parse device_info"
                                                         );
-                                                        eprintln!(
-                                                            "Raw device_info: {}",
-                                                            device.device_info_raw
+                                                        error!(
+                                                            raw_info = %device.device_info_raw,
+                                                            "Raw device_info"
                                                         );
                                                     }
                                                 }
@@ -1285,8 +1363,8 @@ fn process_event_chunk(
                                     ));
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to parse devices from loungeStatus: {}", e);
-                                    eprintln!("Raw devices string: {}", status.devices);
+                                    error!(error = %e, "Failed to parse devices from loungeStatus");
+                                    error!(devices = %status.devices, "Raw devices string");
                                 }
                             }
                         }
@@ -1462,7 +1540,6 @@ impl std::fmt::Debug for LoungeClient {
             .field("screen_id", &self.screen_id)
             .field("device_name", &self.device_name)
             .field("connected", &self.connected)
-            .field("debug_mode", &self.debug_mode)
             .finish()
     }
 }

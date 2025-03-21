@@ -5,6 +5,8 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use tokio::time::{sleep, Duration};
+use tracing::Level;
+use tracing_subscriber::FmtSubscriber;
 use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand, Screen};
 
 // Structure to store screen authentication data
@@ -43,16 +45,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
     let mut pairing_code = None;
-    let mut debug_mode = false;
+    let mut log_level = Level::INFO;
 
     // Simple argument parsing
     for i in 1..args.len() {
-        if args[i] == "--debug" || args[i] == "-d" {
-            debug_mode = true;
-        } else if pairing_code.is_none() {
-            pairing_code = Some(args[i].clone());
+        match args[i].as_str() {
+            "--trace" => log_level = Level::TRACE,
+            "--debug" | "-d" => log_level = Level::DEBUG,
+            "--info" | "-i" => log_level = Level::INFO,
+            "--warn" | "-w" => log_level = Level::WARN,
+            "--error" | "-e" => log_level = Level::ERROR,
+            _ if pairing_code.is_none() => pairing_code = Some(args[i].clone()),
+            _ => {}
         }
     }
+
+    // Initialize tracing subscriber with the specified log level
+    let subscriber = FmtSubscriber::builder().with_max_level(log_level).finish();
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
+
+    println!("Logging level set to: {}", log_level);
 
     // Create a client - either with stored auth or by pairing
     let mut client = if pairing_code.is_some() {
@@ -68,21 +80,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 client
             }
             Err(_) => {
-                println!("Usage: basic_example [pairing_code] [--debug/-d]");
+                println!("Usage: basic_example [pairing_code] [log_level]");
                 println!("  - pairing_code: Code shown on your YouTube TV screen");
-                println!("  - --debug or -d: Enable verbose debug logging");
+                println!("  - log_level: One of the following:");
+                println!("      --trace:  Show all trace-level logs");
+                println!("      --debug/-d: Show debug and higher logs");
+                println!("      --info/-i:  Show info and higher logs (default)");
+                println!("      --warn/-w:  Show warning and higher logs");
+                println!("      --error/-e: Show only error logs");
                 return Ok(());
             }
         }
     };
 
     println!("Using device ID: {}", client.device_id());
-
-    // Only enable debug mode if requested
-    if debug_mode {
-        client.enable_debug_mode();
-        println!("Debug mode enabled - will show raw JSON payloads for events");
-    }
 
     // Step 3: Subscribe to events before connecting
     let mut receiver = client.event_receiver();
