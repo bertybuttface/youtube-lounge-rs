@@ -594,6 +594,10 @@ impl LoungeClient {
         &self.device_id
     }
 
+    pub fn screen_id(&self) -> &str {
+        &self.screen_id
+    }
+
     pub fn event_receiver(&self) -> broadcast::Receiver<LoungeEvent> {
         self.event_sender.subscribe()
     }
