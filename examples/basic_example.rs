@@ -24,6 +24,12 @@ struct StoredScreen {
     lounge_token: String,
     device_id: String,
     device_name: Option<String>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl From<&Screen> for StoredScreen {
@@ -34,6 +40,7 @@ impl From<&Screen> for StoredScreen {
             lounge_token: screen.lounge_token.clone(),
             device_id: String::new(), // Will be set after client creation
             device_name: None,
+            enabled: true,
         }
     }
 }
