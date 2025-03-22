@@ -466,7 +466,7 @@ impl PlaybackSession {
             .parse::<f64>()
             .map_err(LoungeError::NumericParseFailed)?;
 
-        Ok(PlaybackSession {
+        Ok(Self {
             video_id: now_playing.video_id.clone(),
             current_time,
             duration,
@@ -510,9 +510,7 @@ impl SessionState {
     }
 }
 
-/// The main client for interacting with the YouTube Lounge API.
-///
-/// This client enables controlling YouTube playback on TV devices through
+/// Main client enables controlling YouTube playback on TV devices through
 /// the YouTube Lounge API protocol. It handles pairing, authentication,
 /// session management, and sending commands to control playback.
 ///
@@ -564,10 +562,7 @@ impl LoungeClient {
         device_id: Option<&str>,
     ) -> Self {
         let client = Client::new();
-        let device_id = match device_id {
-            Some(id) => id.to_string(),
-            None => Uuid::new_v4().to_string(),
-        };
+        let device_id = device_id.map_or_else(|| Uuid::new_v4().to_string(), ToString::to_string);
         let (event_tx, _) = broadcast::channel(100);
 
         Self {
@@ -582,8 +577,6 @@ impl LoungeClient {
             latest_now_playing: None,
         }
     }
-
-    // Debug mode methods removed in favor of using the standard tracing level system
 
     pub fn device_id(&self) -> &str {
         &self.device_id
@@ -783,14 +776,14 @@ impl LoungeClient {
             debug!("Starting event subscriber task");
 
             loop {
-                // Break if invalid session
-                if session_state.sid.is_none() || session_state.gsessionid.is_none() {
-                    debug!("Session invalid, stopping event subscriber");
-                    break;
-                }
-
-                let sid = session_state.sid.as_ref().unwrap();
-                let gsessionid = session_state.gsessionid.as_ref().unwrap();
+                // Check session validity
+                let (sid, gsessionid) = match (&session_state.sid, &session_state.gsessionid) {
+                    (Some(sid), Some(gsessionid)) => (sid, gsessionid),
+                    _ => {
+                        debug!("Session invalid, stopping event subscriber");
+                        break;
+                    }
+                };
 
                 let mut params = HashMap::new();
                 params.insert("name", device_name.as_str());
@@ -928,13 +921,13 @@ impl LoungeClient {
             return Err(LoungeError::ConnectionClosed);
         }
 
-        if self.session_state.sid.is_none() || self.session_state.gsessionid.is_none() {
-            warn!("Attempted to send command with expired session");
-            return Err(LoungeError::SessionExpired);
-        }
-
-        let sid = self.session_state.sid.as_ref().unwrap().clone();
-        let gsessionid = self.session_state.gsessionid.as_ref().unwrap().clone();
+        let (sid, gsessionid) = match (&self.session_state.sid, &self.session_state.gsessionid) {
+            (Some(sid), Some(gsessionid)) => (sid.clone(), gsessionid.clone()),
+            _ => {
+                warn!("Attempted to send command with expired session");
+                return Err(LoungeError::SessionExpired);
+            }
+        };
 
         let rid = self.session_state.increment_rid();
         let ofs = self.session_state.increment_offset();
@@ -1103,15 +1096,14 @@ impl LoungeClient {
         info!("Disconnecting from screen: {}", self.screen_id);
 
         // Check if session is valid
-        if self.session_state.sid.is_none() || self.session_state.gsessionid.is_none() {
-            warn!("No valid session to disconnect, marking as disconnected");
-            self.connected = false;
-            return Ok(());
-        }
-
-        // First get a copy of the SID and GSS
-        let sid = self.session_state.sid.as_ref().unwrap().clone();
-        let gsessionid = self.session_state.gsessionid.as_ref().unwrap().clone();
+        let (sid, gsessionid) = match (&self.session_state.sid, &self.session_state.gsessionid) {
+            (Some(sid), Some(gsessionid)) => (sid.clone(), gsessionid.clone()),
+            _ => {
+                warn!("No valid session to disconnect, marking as disconnected");
+                self.connected = false;
+                return Ok(());
+            }
+        };
 
         // Then increment counter
         let rid = self.session_state.increment_rid();
@@ -1190,7 +1182,7 @@ impl LoungeClient {
 
 // Helper function to extract session IDs
 fn extract_session_ids(body: &[u8]) -> Result<(Option<String>, Option<String>), LoungeError> {
-    let full_response = String::from_utf8_lossy(body).to_string();
+    let full_response = String::from_utf8_lossy(body);
 
     // Helper function to extract value between markers
     fn extract_value(text: &str, marker: &str) -> Option<String> {
@@ -1206,14 +1198,13 @@ fn extract_session_ids(body: &[u8]) -> Result<(Option<String>, Option<String>), 
     let sid = extract_value(&full_response, "[\"c\",\"");
     let gsessionid = extract_value(&full_response, "[\"S\",\"");
 
-    // Check if we found the session IDs
-    if sid.is_none() || gsessionid.is_none() {
-        return Err(LoungeError::InvalidResponse(
+    // Check if we found the session IDs using pattern matching
+    match (sid, gsessionid) {
+        (Some(sid), Some(gsessionid)) => Ok((Some(sid), Some(gsessionid))),
+        _ => Err(LoungeError::InvalidResponse(
             "Failed to obtain session IDs".to_string(),
-        ));
+        )),
     }
-
-    Ok((sid, gsessionid))
 }
 
 // Process events from the YouTube API
@@ -1293,14 +1284,11 @@ fn process_event_chunk(
                             if let Some(np) = latest_now_playing.as_ref() {
                                 if let (Some(state_cpn), Some(np_cpn)) = (&state.cpn, &np.cpn) {
                                     if state_cpn == np_cpn {
-                                        match PlaybackSession::new(np, &state) {
-                                            Ok(session) => {
-                                                let _ = sender
-                                                    .send(LoungeEvent::PlaybackSession(session));
-                                            }
-                                            Err(e) => {
-                                                warn!("Failed to create playback session: {}", e);
-                                            }
+                                        if let Ok(session) = PlaybackSession::new(np, &state) {
+                                            let _ =
+                                                sender.send(LoungeEvent::PlaybackSession(session));
+                                        } else {
+                                            warn!("Failed to create playback session");
                                         }
                                     } else if state.cpn.is_some() {
                                         warn!(
