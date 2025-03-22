@@ -8,7 +8,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand, Screen};
+use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand, PlaybackStatus, Screen};
 
 // Structure to store screen authentication data
 #[derive(Serialize, Deserialize, Default)]
@@ -164,15 +164,30 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 LoungeEvent::NowPlaying(np) => {
                     if let Some(video_data) = &np.video_data {
                         info!(
-                            "[{}] Now playing: {} ({})",
-                            screen_id_clone, video_data.title, np.video_id
+                            "[{}] Now playing: {} ({}) - State: {} ({})",
+                            screen_id_clone,
+                            video_data.title,
+                            np.video_id,
+                            np.state,
+                            np.status()
                         );
                     } else {
-                        info!("[{}] Now playing: {}", screen_id_clone, np.video_id);
+                        info!(
+                            "[{}] Now playing: {} - State: {} ({})",
+                            screen_id_clone,
+                            np.video_id,
+                            np.state,
+                            np.status()
+                        );
                     }
                 }
                 LoungeEvent::StateChange(state) => {
-                    info!("[{}] State changed: {}", screen_id_clone, state.state);
+                    info!(
+                        "[{}] State changed: {} ({})",
+                        screen_id_clone,
+                        state.state,
+                        state.status()
+                    );
                     debug!(
                         "[{}] Current time: {}s",
                         screen_id_clone, state.current_time
@@ -198,8 +213,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         );
                     }
                     debug!(
-                        "[{}]   State: {}, Loaded: {}s",
-                        screen_id_clone, session.state, session.loaded_time
+                        "[{}]   State: {} ({}), Loaded: {}s",
+                        screen_id_clone,
+                        session.state,
+                        session.status(),
+                        session.loaded_time
                     );
                 }
                 LoungeEvent::ScreenDisconnected => {

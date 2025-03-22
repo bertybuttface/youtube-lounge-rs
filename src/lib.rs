@@ -202,7 +202,7 @@ pub struct VideoData {
 pub struct PlaybackState {
     #[serde(rename = "currentTime", default)]
     pub current_time: String,
-    #[serde(default)]
+    #[serde(default = "default_state")]
     pub state: String,
     #[serde(default)]
     pub duration: String,
@@ -212,13 +212,25 @@ pub struct PlaybackState {
     pub loaded_time: String,
 }
 
+// Helper function to provide default state value of "-1" (Stopped)
+fn default_state() -> String {
+    "-1".to_string()
+}
+
+impl PlaybackState {
+    /// Get the current playback status as enum
+    pub fn status(&self) -> PlaybackStatus {
+        PlaybackStatus::from(self.state.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct NowPlaying {
     #[serde(rename = "videoId", default)]
     pub video_id: String,
     #[serde(rename = "currentTime", default)]
     pub current_time: String,
-    #[serde(default)]
+    #[serde(default = "default_state")]
     pub state: String,
     #[serde(rename = "videoData", default, skip_deserializing)]
     pub video_data: Option<VideoData>,
@@ -226,6 +238,13 @@ pub struct NowPlaying {
     pub cpn: Option<String>,
     #[serde(rename = "listId", default)]
     pub list_id: Option<String>,
+}
+
+impl NowPlaying {
+    /// Get the current playback status as enum
+    pub fn status(&self) -> PlaybackStatus {
+        PlaybackStatus::from(self.state.as_str())
+    }
 }
 
 // Playback Command Enum
@@ -448,6 +467,11 @@ pub struct PlaybackSession {
 }
 
 impl PlaybackSession {
+    /// Get the current playback status as enum
+    pub fn status(&self) -> PlaybackStatus {
+        PlaybackStatus::from(self.state.as_str())
+    }
+
     /// Creates a new PlaybackSession from NowPlaying and StateChange events
     ///
     /// Uses the StateChange event for most playback state information and the
@@ -466,11 +490,18 @@ impl PlaybackSession {
             .parse::<f64>()
             .map_err(LoungeError::NumericParseFailed)?;
 
+        // Use the state from PlaybackState, or default to "-1" if empty
+        let playback_state = if state.state.trim().is_empty() {
+            default_state()
+        } else {
+            state.state.clone()
+        };
+
         Ok(Self {
             video_id: now_playing.video_id.clone(),
             current_time,
             duration,
-            state: state.state.clone(),
+            state: playback_state,
             video_data: None,
             cpn: state.cpn.clone(),
             list_id: now_playing.list_id.clone(),
@@ -1277,6 +1308,9 @@ fn process_event_chunk(
                         if let Ok(state) =
                             deserialize_with_logging::<PlaybackState>(event_type, payload)
                         {
+                            // Log state change with enum value
+                            debug!("State changed: {} ({})", state.state, state.status());
+
                             // Send the raw StateChange event
                             let _ = sender.send(LoungeEvent::StateChange(state.clone()));
 
@@ -1305,6 +1339,13 @@ fn process_event_chunk(
                         if let Ok(now_playing) =
                             deserialize_with_logging::<NowPlaying>(event_type, payload)
                         {
+                            // Log now playing state with enum value
+                            debug!(
+                                "Now playing state: {} ({})",
+                                now_playing.state,
+                                now_playing.status()
+                            );
+
                             // Store NowPlaying if it has a CPN (only useful for creating PlaybackSession)
                             if now_playing.cpn.is_some() {
                                 *latest_now_playing = Some(now_playing.clone());
@@ -1451,6 +1492,53 @@ pub mod youtube_parse {
 
     pub fn parse_list(s: &str) -> Vec<String> {
         s.split(',').map(|s| s.trim().to_string()).collect()
+    }
+}
+
+/// Represents the playback status codes from YouTube
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackStatus {
+    Stopped = -1,
+    Buffering = 0,
+    Playing = 1,
+    Paused = 2,
+    Starting = 3,
+    Advertisement = 1081,
+    Unknown = 9999,
+}
+
+impl From<&str> for PlaybackStatus {
+    fn from(state: &str) -> Self {
+        match state.parse::<i32>() {
+            Ok(-1) => Self::Stopped,
+            Ok(0) => Self::Buffering,
+            Ok(1) => Self::Playing,
+            Ok(2) => Self::Paused,
+            Ok(3) => Self::Starting,
+            Ok(1081) => Self::Advertisement,
+            Ok(val) => {
+                warn!("Unknown status value: {}", val);
+                Self::Unknown
+            }
+            Err(_) => {
+                warn!("Failed to parse status: {}", state);
+                Self::Unknown
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for PlaybackStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Stopped => "Stopped",
+            Self::Buffering => "Buffering",
+            Self::Playing => "Playing",
+            Self::Paused => "Paused",
+            Self::Starting => "Starting",
+            Self::Advertisement => "Advertisement",
+            Self::Unknown => "Unknown",
+        })
     }
 }
 
