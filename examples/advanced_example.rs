@@ -213,22 +213,35 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         );
                     }
                     LoungeEvent::PlaybackSession(session) => {
+                        // Calculate progress percentage
+                        let progress_pct = if session.duration > 0.0 {
+                            (session.current_time / session.duration * 100.0).round() as i32
+                        } else {
+                            0
+                        };
+
                         if let Some(video_data) = &session.video_data {
                             info!(
-                                "[{}] Playback Session - {} ({}) - {}s / {}s",
+                                "[{}] Playback Session - {} ({}) - {}s / {}s [{}%] - State: {} ({})",
                                 screen_id_clone,
                                 video_data.title,
                                 session.video_id,
                                 session.current_time,
-                                session.duration
+                                session.duration,
+                                progress_pct,
+                                session.state,
+                                session.status()
                             );
                         } else {
                             info!(
-                                "[{}] Playback Session - {} - {}s / {}s",
+                                "[{}] Playback Session - {} - {}s / {}s [{}%] - State: {} ({})",
                                 screen_id_clone,
                                 session.video_id,
                                 session.current_time,
-                                session.duration
+                                session.duration,
+                                progress_pct,
+                                session.state,
+                                session.status()
                             );
                         }
                         debug!(
