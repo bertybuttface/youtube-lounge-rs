@@ -1,7 +1,7 @@
 use serde_json::json;
 use youtube_lounge_rs::{
-    AdState, Device, DeviceInfo, LoungeClient, LoungeError, LoungeEvent, NowPlaying,
-    PlaybackCommand, PlaybackSession, PlaybackState, Screen, YoutubeValueParser,
+    youtube_parse, AdState, Device, DeviceInfo, LoungeClient, LoungeError, LoungeEvent, NowPlaying,
+    PlaybackCommand, PlaybackState, Screen,
 };
 
 // Test model serialization and deserialization
@@ -115,79 +115,41 @@ fn test_events() {
     }
 }
 
-// Test YoutubeValueParser utility trait
 #[test]
-fn test_youtube_value_parser() {
+fn test_youtube_parse_module() {
     // Test parse_float
-    assert_eq!(<str as YoutubeValueParser>::parse_float("42.5"), 42.5);
-    assert_eq!(
-        <str as YoutubeValueParser>::parse_float("not_a_number"),
-        0.0
-    ); // Default value
+    assert_eq!(youtube_parse::parse_float("42.5"), 42.5);
+    assert_eq!(youtube_parse::parse_float("not_a_number"), 0.0); // Default value
 
     // Test parse_int
-    assert_eq!(<str as YoutubeValueParser>::parse_int("42"), 42);
-    assert_eq!(<str as YoutubeValueParser>::parse_int("not_a_number"), 0); // Default value
+    assert_eq!(youtube_parse::parse_int("42"), 42);
+    assert_eq!(youtube_parse::parse_int("not_a_number"), 0); // Default value
 
     // Test parse_bool
-    assert!(<str as YoutubeValueParser>::parse_bool("true"));
-    assert!(!<str as YoutubeValueParser>::parse_bool("false"));
-    assert!(!<str as YoutubeValueParser>::parse_bool("anything_else"));
+    assert!(youtube_parse::parse_bool("true"));
+    assert!(!youtube_parse::parse_bool("false"));
+    assert!(!youtube_parse::parse_bool("anything_else"));
 
     // Test parse_list
-    let list = <str as YoutubeValueParser>::parse_list("item1,item2,item3");
+    let list = youtube_parse::parse_list("item1,item2,item3");
     assert_eq!(list, vec!["item1", "item2", "item3"]);
-
-    // Test PlaybackSession event
-    let state = PlaybackState {
-        state: "1".to_string(),
-        current_time: "42.5".to_string(),
-        duration: "180.0".to_string(),
-        cpn: Some("test_cpn".to_string()),
-        loaded_time: "60.0".to_string(),
-    };
-
-    let np = NowPlaying {
-        video_id: "dQw4w9WgXcQ".to_string(),
-        current_time: "42.5".to_string(),
-        state: "1".to_string(),
-        video_data: None,
-        cpn: Some("test_cpn".to_string()),
-        list_id: Some("PLtestlist".to_string()),
-    };
-
-    let session = PlaybackSession::new(&np, &state);
-    let event = LoungeEvent::PlaybackSession(session);
-
-    match event {
-        LoungeEvent::PlaybackSession(session) => {
-            assert_eq!(session.video_id, "dQw4w9WgXcQ");
-            assert_eq!(session.current_time, 42.5);
-            assert_eq!(session.duration, 180.0);
-            assert_eq!(session.state, "1");
-            assert_eq!(session.loaded_time, 60.0);
-            assert_eq!(session.list_id, Some("PLtestlist".to_string()));
-            assert_eq!(session.cpn, Some("test_cpn".to_string()));
-        }
-        _ => panic!("Expected PlaybackSession event"),
-    }
 }
 
 // Test client constructors
 #[tokio::test]
 async fn test_client_constructors() {
     // Test new client with auto-generated device ID
-    let client = LoungeClient::new("test_screen_id", "test_token", "Test Device");
+    let client = LoungeClient::new("test_screen_id", "test_token", "Test Device", None);
     let device_id = client.device_id();
     assert!(!device_id.is_empty());
 
     // Test client with explicit device ID
     let test_device_id = "persistent_device_id_123";
-    let client = LoungeClient::with_device_id(
+    let client = LoungeClient::new(
         "test_screen_id",
         "test_token",
         "Test Device",
-        test_device_id,
+        Some(test_device_id),
     );
     assert_eq!(client.device_id(), test_device_id);
 

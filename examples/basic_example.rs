@@ -381,6 +381,7 @@ async fn create_client_with_pairing(
         &screen.screen_id,
         &screen.lounge_token,
         "Rust YouTube Controller",
+        None,
     );
 
     // Store auth data for next time
@@ -447,14 +448,14 @@ async fn create_client_from_stored_auth() -> Result<LoungeClient, Box<dyn Error 
     }
 
     // Create client with stored device ID
-    let client = LoungeClient::with_device_id(
+    let client = LoungeClient::new(
         &stored_screen.screen_id,
         &stored_screen.lounge_token,
         stored_screen
             .device_name
             .as_deref()
             .unwrap_or("Rust YouTube Controller"),
-        &stored_screen.device_id,
+        Some(stored_screen.device_id.as_str()),
     );
 
     info!(

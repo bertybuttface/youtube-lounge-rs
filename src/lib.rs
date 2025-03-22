@@ -10,6 +10,8 @@ use tokio_util::codec::Decoder;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+const BUFFER_CAPACITY: usize = 16 * 1024; // 16KB initial buffer capacity
+
 // Basic error handling with thiserror
 #[derive(Error, Debug)]
 pub enum LoungeError {
@@ -18,6 +20,12 @@ pub enum LoungeError {
 
     #[error("JSON parsing failed: {0}")]
     ParseFailed(#[from] serde_json::Error),
+
+    #[error("URL encoding failed: {0}")]
+    UrlEncodingFailed(#[from] serde_urlencoded::ser::Error),
+
+    #[error("Numeric parsing failed: {0}")]
+    NumericParseFailed(#[from] std::num::ParseFloatError),
 
     #[error("Session expired")]
     SessionExpired,
@@ -62,70 +70,73 @@ impl Decoder for LoungeCodec {
     type Error = std::io::Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        match &mut self.state {
-            LoungeCodecState::ReadingSize => {
-                // Look for a newline to delimit the size
-                if let Some(newline_pos) = buf.iter().position(|&b| b == b'\n') {
-                    // Extract the size line
-                    let line = buf.split_to(newline_pos + 1);
+        loop {
+            match &mut self.state {
+                LoungeCodecState::ReadingSize => {
+                    // Look for a newline to delimit the size
+                    if let Some(newline_pos) = buf.iter().position(|&b| b == b'\n') {
+                        // Extract the size line (including the newline)
+                        let line = buf.split_to(newline_pos + 1);
 
-                    // Parse the size
-                    let size_str = std::str::from_utf8(&line[..line.len() - 1]).map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Invalid UTF-8 in size header",
-                        )
-                    })?;
+                        // Convert to UTF-8 and trim
+                        let size_str =
+                            std::str::from_utf8(&line[..line.len() - 1]).map_err(|_| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    "Invalid UTF-8 in size header",
+                                )
+                            })?;
 
-                    // Verify and parse the size
-                    let size_str = size_str.trim();
-                    if !size_str.chars().all(|c| c.is_ascii_digit()) {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("Expected numeric size, got: {}", size_str),
-                        ));
+                        let size_str = size_str.trim();
+
+                        // Ensure it’s numeric
+                        if !size_str.chars().all(|c| c.is_ascii_digit()) {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("Expected numeric size, got: {}", size_str),
+                            ));
+                        }
+
+                        // Parse to usize
+                        let expected_size = size_str.parse::<usize>().map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("Invalid size: {}", size_str),
+                            )
+                        })?;
+
+                        // Move to next state
+                        self.state = LoungeCodecState::ReadingContent { expected_size };
+
+                        // Continue loop to handle content immediately
+                        continue;
                     }
 
-                    let expected_size = size_str.parse::<usize>().map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("Invalid size: {}", size_str),
-                        )
-                    })?;
-
-                    // Transition to reading content state
-                    self.state = LoungeCodecState::ReadingContent { expected_size };
-
-                    // Continue with content parsing
-                    return self.decode(buf);
+                    // Not enough data for a full size line
+                    return Ok(None);
                 }
 
-                // Not enough data for a complete size line
-                Ok(None)
-            }
+                LoungeCodecState::ReadingContent { expected_size } => {
+                    // Wait for enough data
+                    if buf.len() >= *expected_size {
+                        let content = buf.split_to(*expected_size);
 
-            LoungeCodecState::ReadingContent { expected_size } => {
-                // Check if we have enough data
-                if buf.len() >= *expected_size {
-                    // We have a complete message
-                    let content = buf.split_to(*expected_size);
+                        let message = String::from_utf8(content.to_vec()).map_err(|_| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "Invalid UTF-8 in message content",
+                            )
+                        })?;
 
-                    // Convert to string
-                    let message = String::from_utf8(content.to_vec()).map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            "Invalid UTF-8 in message content",
-                        )
-                    })?;
+                        // Reset state
+                        self.state = LoungeCodecState::ReadingSize;
 
-                    // Reset state for next message
-                    self.state = LoungeCodecState::ReadingSize;
+                        return Ok(Some(message));
+                    }
 
-                    return Ok(Some(message));
+                    // Wait for more data
+                    return Ok(None);
                 }
-
-                // Not enough data yet
-                Ok(None)
             }
         }
     }
@@ -441,31 +452,34 @@ impl PlaybackSession {
     ///
     /// Uses the StateChange event for most playback state information and the
     /// NowPlaying event for additional context like playlist ID.
-    pub fn new(now_playing: &NowPlaying, state: &PlaybackState) -> Self {
-        // Parse numeric values with fallbacks to 0.0 if parsing fails
-        let current_time = state.current_time.parse::<f64>().unwrap_or(0.0);
-        let duration = state.duration.parse::<f64>().unwrap_or(0.0);
-        let loaded_time = state.loaded_time.parse::<f64>().unwrap_or(0.0);
+    pub fn new(now_playing: &NowPlaying, state: &PlaybackState) -> Result<Self, LoungeError> {
+        let current_time = state
+            .current_time
+            .parse::<f64>()
+            .map_err(LoungeError::NumericParseFailed)?;
+        let duration = state
+            .duration
+            .parse::<f64>()
+            .map_err(LoungeError::NumericParseFailed)?;
+        let loaded_time = state
+            .loaded_time
+            .parse::<f64>()
+            .map_err(LoungeError::NumericParseFailed)?;
 
-        // Create session with combined data
-        // Use NowPlaying video_id as StateChange doesn't include it in practice
-        let video_id = now_playing.video_id.clone();
-
-        PlaybackSession {
-            video_id,
+        Ok(PlaybackSession {
+            video_id: now_playing.video_id.clone(),
             current_time,
             duration,
             state: state.state.clone(),
-            // Video data requires a separate API call to populate
             video_data: None,
             cpn: state.cpn.clone(),
             list_id: now_playing.list_id.clone(),
             loaded_time,
-        }
+        })
     }
 }
 
-// Core client
+#[derive(Clone)]
 struct SessionState {
     sid: Option<String>,
     gsessionid: Option<String>,
@@ -541,43 +555,24 @@ pub struct LoungeClient {
 }
 
 impl LoungeClient {
-    pub fn new(screen_id: &str, lounge_token: &str, device_name: &str) -> Self {
+    /// Create a new LoungeClient. If a device_id is provided, it will be used;
+    /// otherwise, a new UUID is generated.
+    pub fn new(
+        screen_id: &str,
+        lounge_token: &str,
+        device_name: &str,
+        device_id: Option<&str>,
+    ) -> Self {
         let client = Client::new();
-        let device_id = Uuid::new_v4().to_string();
+        let device_id = match device_id {
+            Some(id) => id.to_string(),
+            None => Uuid::new_v4().to_string(),
+        };
         let (event_tx, _) = broadcast::channel(100);
-
-        debug!("Creating new LoungeClient with screen_id: {}", screen_id);
 
         Self {
             client,
             device_id,
-            screen_id: screen_id.to_string(),
-            lounge_token: lounge_token.to_string(),
-            device_name: device_name.to_string(),
-            session_state: SessionState::new(),
-            event_sender: event_tx,
-            connected: false,
-            latest_now_playing: None,
-        }
-    }
-
-    pub fn with_device_id(
-        screen_id: &str,
-        lounge_token: &str,
-        device_name: &str,
-        device_id: &str,
-    ) -> Self {
-        let client = Client::new();
-        let (event_tx, _) = broadcast::channel(100);
-
-        debug!(
-            "Creating LoungeClient with existing device_id: {}",
-            device_id
-        );
-
-        Self {
-            client,
-            device_id: device_id.to_string(),
             screen_id: screen_id.to_string(),
             lounge_token: lounge_token.to_string(),
             device_name: device_name.to_string(),
@@ -724,7 +719,7 @@ impl LoungeClient {
         ];
 
         // Build the connect form data
-        let form_data = self.build_connect_form_data();
+        let form_data = self.build_connect_form_data()?;
         debug!("Sending initial connection request");
 
         let response = self
@@ -870,7 +865,7 @@ impl LoungeClient {
                 let mut codec = LoungeCodec::new();
 
                 // Buffer for accumulating bytes from the stream
-                let mut buffer = BytesMut::with_capacity(16 * 1024); // 16KB initial capacity
+                let mut buffer = BytesMut::with_capacity(BUFFER_CAPACITY);
 
                 while let Some(chunk_result) = stream.next().await {
                     match chunk_result {
@@ -933,17 +928,14 @@ impl LoungeClient {
             return Err(LoungeError::ConnectionClosed);
         }
 
-        // Check if session is valid
         if self.session_state.sid.is_none() || self.session_state.gsessionid.is_none() {
             warn!("Attempted to send command with expired session");
             return Err(LoungeError::SessionExpired);
         }
 
-        // First get a copy of the SID and GSS
         let sid = self.session_state.sid.as_ref().unwrap().clone();
         let gsessionid = self.session_state.gsessionid.as_ref().unwrap().clone();
 
-        // Then increment counters
         let rid = self.session_state.increment_rid();
         let ofs = self.session_state.increment_offset();
 
@@ -953,21 +945,13 @@ impl LoungeClient {
             command_name, rid, ofs
         );
 
-        // Prepare base parameters
-        let params = [
-            ("name", self.device_name.as_str()),
-            ("loungeIdToken", self.lounge_token.as_str()),
-            ("SID", sid.as_str()),
-            ("gsessionid", gsessionid.as_str()),
-            ("VER", "8"),
-            ("v", "2"),
-            ("RID", &rid.to_string()),
+        // Form body as Vec of (&str, String) for reqwest .form()
+        let mut form_fields: Vec<(&str, String)> = vec![
+            ("count", "1".to_string()),
+            ("ofs", ofs.to_string()),
+            ("req0__sc", command_name.to_string()),
         ];
 
-        // Build form data with command parameters
-        let mut form_data = format!("count=1&ofs={}&req0__sc={}", ofs, command_name);
-
-        // Add command-specific parameters
         match &command {
             PlaybackCommand::SetPlaylist {
                 video_id,
@@ -978,69 +962,83 @@ impl LoungeClient {
                 params,
                 player_params,
             } => {
-                form_data.push_str(&format!("&req0_videoId={}", video_id));
+                form_fields.push(("req0_videoId", video_id.clone()));
 
                 if let Some(idx) = current_index {
-                    form_data.push_str(&format!("&req0_currentIndex={}", idx));
+                    form_fields.push(("req0_currentIndex", idx.to_string()));
                 }
 
                 if let Some(list) = list_id {
-                    form_data.push_str(&format!("&req0_listId={}", list));
+                    form_fields.push(("req0_listId", list.clone()));
                 }
 
                 if let Some(time) = current_time {
-                    form_data.push_str(&format!("&req0_currentTime={}", time));
+                    form_fields.push(("req0_currentTime", time.to_string()));
                 }
 
                 if let Some(audio) = audio_only {
-                    form_data.push_str(&format!("&req0_audioOnly={}", audio));
+                    form_fields.push(("req0_audioOnly", audio.to_string()));
                 }
 
                 if let Some(p) = params {
-                    form_data.push_str(&format!("&req0_params={}", p));
+                    form_fields.push(("req0_params", p.clone()));
                 }
 
                 if let Some(pp) = player_params {
-                    form_data.push_str(&format!("&req0_playerParams={}", pp));
+                    form_fields.push(("req0_playerParams", pp.clone()));
                 }
 
-                // Add recommended param from documentation
-                form_data.push_str("&req0_prioritizeMobileSenderPlaybackStateOnConnection=true");
+                form_fields.push((
+                    "req0_prioritizeMobileSenderPlaybackStateOnConnection",
+                    "true".to_string(),
+                ));
             }
+
             PlaybackCommand::AddVideo {
                 video_id,
                 video_sources,
             } => {
-                form_data.push_str(&format!("&req0_videoId={}", video_id));
-
+                form_fields.push(("req0_videoId", video_id.clone()));
                 if let Some(sources) = video_sources {
-                    form_data.push_str(&format!("&req0_videoSources={}", sources));
+                    form_fields.push(("req0_videoSources", sources.clone()));
                 }
             }
+
             PlaybackCommand::SeekTo { new_time } => {
-                form_data.push_str(&format!("&req0_newTime={}", new_time));
+                form_fields.push(("req0_newTime", new_time.to_string()));
             }
+
             PlaybackCommand::SetVolume { volume } => {
-                form_data.push_str(&format!("&req0_volume={}", volume));
+                form_fields.push(("req0_volume", volume.to_string()));
             }
+
             PlaybackCommand::SetAutoplayMode { autoplay_mode } => {
-                form_data.push_str(&format!("&req0_autoplayMode={}", autoplay_mode));
+                form_fields.push(("req0_autoplayMode", autoplay_mode.clone()));
             }
+
             _ => {}
         }
 
-        // Send the request
+        let params = [
+            ("name", self.device_name.as_str()),
+            ("loungeIdToken", self.lounge_token.as_str()),
+            ("SID", sid.as_str()),
+            ("gsessionid", gsessionid.as_str()),
+            ("VER", "8"),
+            ("v", "2"),
+            ("RID", &rid.to_string()),
+        ];
+
         debug!("Sending command request to YouTube Lounge API");
+
         let response = self
             .client
             .post("https://www.youtube.com/api/lounge/bc/bind")
             .query(&params)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(form_data)
+            .form(&form_fields) // 💡 magic happens here — safe, clean, escaped
             .send()
             .await?;
 
-        // Handle errors
         match response.status().as_u16() {
             400 => {
                 warn!(
@@ -1158,8 +1156,8 @@ impl LoungeClient {
     }
 
     // Build form data for initial connection
-    fn build_connect_form_data(&self) -> String {
-        let params = [
+    fn build_connect_form_data(&self) -> Result<String, LoungeError> {
+        let form_fields = vec![
             ("app", "web"),
             ("mdx-version", "3"),
             ("name", &self.device_name),
@@ -1178,11 +1176,7 @@ impl LoungeClient {
             ("loungeIdToken", &self.lounge_token),
         ];
 
-        params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<String>>()
-            .join("&")
+        serde_urlencoded::to_string(&form_fields).map_err(LoungeError::UrlEncodingFailed)
     }
 
     // Get video thumbnail URL
@@ -1297,14 +1291,18 @@ fn process_event_chunk(
 
                             // Process PlaybackSession event if we have a matching NowPlaying
                             if let Some(np) = latest_now_playing.as_ref() {
-                                // Check if we have CPNs to match and they match
                                 if let (Some(state_cpn), Some(np_cpn)) = (&state.cpn, &np.cpn) {
                                     if state_cpn == np_cpn {
-                                        // Create and send PlaybackSession event
-                                        let session = PlaybackSession::new(np, &state);
-                                        let _ = sender.send(LoungeEvent::PlaybackSession(session));
+                                        match PlaybackSession::new(np, &state) {
+                                            Ok(session) => {
+                                                let _ = sender
+                                                    .send(LoungeEvent::PlaybackSession(session));
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to create playback session: {}", e);
+                                            }
+                                        }
                                     } else if state.cpn.is_some() {
-                                        // CPNs don't match - log a warning
                                         warn!(
                                             state_cpn = ?state.cpn,
                                             np_cpn = ?np.cpn,
@@ -1448,58 +1446,52 @@ fn process_event_chunk(
     }
 }
 
-// Helper trait for parsing YouTube's string values
-pub trait YoutubeValueParser {
-    /// Parse a string to float
-    fn parse_float(s: &str) -> f64 {
+// Helper module for parsing YouTube's string values
+pub mod youtube_parse {
+    #[allow(dead_code)]
+    pub fn parse_float(s: &str) -> f64 {
         s.parse::<f64>().unwrap_or(0.0)
     }
 
-    /// Parse a string to int
-    fn parse_int(s: &str) -> i32 {
+    pub fn parse_int(s: &str) -> i32 {
         s.parse::<i32>().unwrap_or(0)
     }
 
-    /// Parse a string to bool
-    fn parse_bool(s: &str) -> bool {
+    pub fn parse_bool(s: &str) -> bool {
         s == "true"
     }
 
-    /// Parse a comma-separated list to a vector of strings
-    fn parse_list(s: &str) -> Vec<String> {
+    pub fn parse_list(s: &str) -> Vec<String> {
         s.split(',').map(|s| s.trim().to_string()).collect()
     }
 }
 
-// Implement for str
-impl YoutubeValueParser for str {}
-
 // Helper methods for HasPreviousNextChanged
 impl HasPreviousNextChanged {
     pub fn has_next(&self) -> bool {
-        <str as YoutubeValueParser>::parse_bool(&self.has_next)
+        youtube_parse::parse_bool(&self.has_next)
     }
 
     pub fn has_previous(&self) -> bool {
-        <str as YoutubeValueParser>::parse_bool(&self.has_previous)
+        youtube_parse::parse_bool(&self.has_previous)
     }
 }
 
 // Helper methods for VideoQualityChanged
 impl VideoQualityChanged {
     pub fn available_qualities(&self) -> Vec<String> {
-        <str as YoutubeValueParser>::parse_list(&self.available_quality_levels)
+        youtube_parse::parse_list(&self.available_quality_levels)
     }
 }
 
 // Helper methods for VolumeChanged
 impl VolumeChanged {
     pub fn is_muted(&self) -> bool {
-        <str as YoutubeValueParser>::parse_bool(&self.muted)
+        youtube_parse::parse_bool(&self.muted)
     }
 
     pub fn volume_level(&self) -> i32 {
-        <str as YoutubeValueParser>::parse_int(&self.volume)
+        youtube_parse::parse_int(&self.volume)
     }
 }
 
@@ -1508,7 +1500,7 @@ impl PlaylistModified {
     pub fn current_index_value(&self) -> Option<i32> {
         self.current_index
             .as_ref()
-            .map(|idx| <str as YoutubeValueParser>::parse_int(idx))
+            .map(|idx| youtube_parse::parse_int(idx))
     }
 }
 
@@ -1520,19 +1512,6 @@ impl AdState {
 
     pub fn get_content_video_id(&self) -> &str {
         &self.content_video_id
-    }
-}
-
-// Helper trait implementations for SessionState
-impl Clone for SessionState {
-    fn clone(&self) -> Self {
-        Self {
-            sid: self.sid.clone(),
-            gsessionid: self.gsessionid.clone(),
-            aid: self.aid.clone(),
-            rid: self.rid,
-            command_offset: self.command_offset,
-        }
     }
 }
 
