@@ -1333,8 +1333,13 @@ fn process_event_chunk(
                                         } else {
                                             warn!("Failed to create playback session");
                                         }
+                                        debug!(
+                                            state_cpn = ?state.cpn,
+                                            np_cpn = ?np.cpn,
+                                            "StateChange CPN matches NowPlaying CPN"
+                                        );
                                     } else if state.cpn.is_some() {
-                                        warn!(
+                                        debug!(
                                             state_cpn = ?state.cpn,
                                             np_cpn = ?np.cpn,
                                             "StateChange CPN doesn't match NowPlaying CPN"
@@ -1344,25 +1349,53 @@ fn process_event_chunk(
                             }
                         }
                     }
-                    // Then update the handler:
                     "nowPlaying" => {
                         if let Ok(now_playing) =
                             deserialize_with_logging::<NowPlaying>(event_type, payload)
                         {
-                            // Log now playing state with enum value
                             debug!(
-                                "Now playing state: {} ({})",
+                                "NowPlaying: id={} state={} time={}/{} list={} cpn={}",
+                                now_playing.video_id,
                                 now_playing.state,
-                                now_playing.status()
+                                now_playing.current_time,
+                                now_playing.duration,
+                                now_playing.list_id.as_deref().unwrap_or("-"),
+                                now_playing.cpn.as_deref().unwrap_or("-")
                             );
 
-                            // Store NowPlaying if it has a CPN
+                            // Always send the raw event
+                            let _ = sender.send(LoungeEvent::NowPlaying(now_playing.clone()));
+
+                            // Store events with CPN for matching with StateChange
                             if now_playing.cpn.is_some() {
-                                // Create a PlaybackSession if we have enough data
-                                if !now_playing.video_id.is_empty()
+                                *latest_now_playing = Some(now_playing.clone());
+                            }
+
+                            // Create and send a PlaybackSession if possible
+                            match now_playing.state.as_str() {
+                                // Handle stop events (-1)
+                                "-1" if now_playing.video_id.is_empty() => {
+                                    if let Some(prev) = latest_now_playing.as_ref() {
+                                        let state = PlaybackState {
+                                            current_time: "0".to_string(),
+                                            state: "-1".to_string(),
+                                            duration: prev.duration.clone(),
+                                            cpn: prev.cpn.clone(),
+                                            loaded_time: "0".to_string(),
+                                        };
+
+                                        if let Ok(session) = PlaybackSession::new(prev, &state) {
+                                            let _ =
+                                                sender.send(LoungeEvent::PlaybackSession(session));
+                                        }
+                                    }
+                                }
+
+                                // Handle normal events with sufficient data
+                                _ if !now_playing.video_id.is_empty()
                                     && !now_playing.duration.is_empty()
+                                    && !now_playing.current_time.is_empty() =>
                                 {
-                                    // Create a PlaybackState from the NowPlaying data
                                     let state = PlaybackState {
                                         current_time: now_playing.current_time.clone(),
                                         state: now_playing.state.clone(),
@@ -1371,25 +1404,14 @@ fn process_event_chunk(
                                         loaded_time: now_playing.loaded_time.clone(),
                                     };
 
-                                    // Create and send the PlaybackSession event
-                                    match PlaybackSession::new(&now_playing, &state) {
-                                        Ok(session) => {
-                                            debug!("Created PlaybackSession from NowPlaying event");
-                                            let _ =
-                                                sender.send(LoungeEvent::PlaybackSession(session));
-                                        }
-                                        Err(e) => {
-                                            warn!(error = %e, "Failed to create PlaybackSession from NowPlaying");
-                                        }
+                                    if let Ok(session) = PlaybackSession::new(&now_playing, &state)
+                                    {
+                                        let _ = sender.send(LoungeEvent::PlaybackSession(session));
                                     }
                                 }
 
-                                // Store for later use with StateChange events
-                                *latest_now_playing = Some(now_playing.clone());
+                                _ => debug!("Insufficient data to create PlaybackSession"),
                             }
-
-                            // Send the raw NowPlaying event
-                            let _ = sender.send(LoungeEvent::NowPlaying(now_playing));
                         }
                     }
                     "loungeStatus" => {
