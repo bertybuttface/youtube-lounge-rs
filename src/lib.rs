@@ -238,6 +238,15 @@ pub struct NowPlaying {
     pub cpn: Option<String>,
     #[serde(rename = "listId", default)]
     pub list_id: Option<String>,
+    // Sometimes we have more fields
+    #[serde(default)]
+    pub duration: String,
+    #[serde(rename = "loadedTime", default)]
+    pub loaded_time: String,
+    #[serde(rename = "seekableStartTime", default)]
+    pub seekable_start_time: String,
+    #[serde(rename = "seekableEndTime", default)]
+    pub seekable_end_time: String,
 }
 
 impl NowPlaying {
@@ -1335,6 +1344,7 @@ fn process_event_chunk(
                             }
                         }
                     }
+                    // Then update the handler:
                     "nowPlaying" => {
                         if let Ok(now_playing) =
                             deserialize_with_logging::<NowPlaying>(event_type, payload)
@@ -1346,8 +1356,35 @@ fn process_event_chunk(
                                 now_playing.status()
                             );
 
-                            // Store NowPlaying if it has a CPN (only useful for creating PlaybackSession)
+                            // Store NowPlaying if it has a CPN
                             if now_playing.cpn.is_some() {
+                                // Create a PlaybackSession if we have enough data
+                                if !now_playing.video_id.is_empty()
+                                    && !now_playing.duration.is_empty()
+                                {
+                                    // Create a PlaybackState from the NowPlaying data
+                                    let state = PlaybackState {
+                                        current_time: now_playing.current_time.clone(),
+                                        state: now_playing.state.clone(),
+                                        duration: now_playing.duration.clone(),
+                                        cpn: now_playing.cpn.clone(),
+                                        loaded_time: now_playing.loaded_time.clone(),
+                                    };
+
+                                    // Create and send the PlaybackSession event
+                                    match PlaybackSession::new(&now_playing, &state) {
+                                        Ok(session) => {
+                                            debug!("Created PlaybackSession from NowPlaying event");
+                                            let _ =
+                                                sender.send(LoungeEvent::PlaybackSession(session));
+                                        }
+                                        Err(e) => {
+                                            warn!(error = %e, "Failed to create PlaybackSession from NowPlaying");
+                                        }
+                                    }
+                                }
+
+                                // Store for later use with StateChange events
                                 *latest_now_playing = Some(now_playing.clone());
                             }
 

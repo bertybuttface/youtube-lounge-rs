@@ -88,6 +88,10 @@ fn test_events() {
         video_data: None,
         cpn: Some("test_cpn".to_string()),
         list_id: Some("PLtestlist".to_string()),
+        duration: "180.0".to_string(),
+        loaded_time: "60.0".to_string(),
+        seekable_start_time: "0.0".to_string(),
+        seekable_end_time: "180.0".to_string(),
     };
     let event = LoungeEvent::NowPlaying(now_playing);
 
