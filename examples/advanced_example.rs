@@ -1,14 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self};
 use std::path::Path;
 use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand, PlaybackStatus, Screen};
+use youtube_lounge_rs::{LoungeClient, LoungeEvent, Screen};
 
 // Structure to store screen authentication data
 #[derive(Serialize, Deserialize, Default)]
@@ -47,6 +46,14 @@ impl From<&Screen> for StoredScreen {
 }
 
 const AUTH_FILENAME: &str = "youtube_auth.json";
+
+use fs2::FileExt;
+use std::sync::{Arc, Mutex};
+
+// Create a global file lock for auth store updates
+lazy_static::lazy_static! {
+    static ref AUTH_FILE_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
+}
 
 /// A simple example showing how to use the YouTube Lounge API with persistence
 #[tokio::main]
@@ -157,7 +164,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
         // Step 5: Connect to the screen
         info!("[{}] Connecting to screen", screen_id);
-        match client.connect().await {
+        match client.connect_with_refresh().await {
             Ok(_) => info!("[{}] Successfully connected to screen", screen_id),
             Err(e) => {
                 warn!("[{}] Failed to connect to screen: {}", screen_id, e);
@@ -363,7 +370,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // Check if we have any connected clients
     if connected_clients.is_empty() {
-        error!("Failed to connect to any screens. Please check that your YouTube app is open on your TV/device.");
+        error!("Failed to connect to any screens.");
         return Ok(());
     }
 
@@ -406,6 +413,154 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok::<(), Box<dyn Error + Send + Sync>>(())
 }
 
+fn update_token_in_auth_store(
+    screen_id: &str,
+    new_token: &str,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    info!("[{}] Updating stored lounge token", screen_id);
+
+    // Acquire the mutex lock to ensure only one thread tries to update at a time
+    let _guard = match AUTH_FILE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            error!(
+                "[{}] Failed to acquire lock for auth file: {}",
+                screen_id, e
+            );
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Lock acquisition failed: {}", e),
+            )));
+        }
+    };
+
+    debug!("[{}] Acquired auth file lock for token update", screen_id);
+
+    // Open the auth file with explicit file locking
+    let mut file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(AUTH_FILENAME)
+    {
+        Ok(file) => file,
+        Err(e) => {
+            error!("[{}] Failed to open auth file for update: {}", screen_id, e);
+            return Err(Box::new(e));
+        }
+    };
+
+    // Acquire an exclusive lock on the file
+    if let Err(e) = file.lock_exclusive() {
+        error!("[{}] Failed to acquire file lock: {}", screen_id, e);
+        return Err(Box::new(e));
+    }
+
+    debug!("[{}] Acquired exclusive file lock", screen_id);
+
+    // Read the current content
+    let mut contents = String::new();
+    let mut auth_store: AuthStore =
+        match std::io::Read::read_to_string(&mut file.try_clone()?, &mut contents) {
+            Ok(_) => {
+                // Parse the file content
+                match serde_json::from_str(&contents) {
+                    Ok(store) => store,
+                    Err(e) => {
+                        error!("[{}] Failed to parse auth file: {}", screen_id, e);
+
+                        // Release the lock before returning
+                        let _ = FileExt::unlock(&file);
+                        return Err(Box::new(e));
+                    }
+                }
+            }
+            Err(e) => {
+                error!("[{}] Failed to read auth file: {}", screen_id, e);
+
+                // Release the lock before returning
+                let _ = FileExt::unlock(&file);
+                return Err(Box::new(e));
+            }
+        };
+
+    // Update the token if the screen exists in the store
+    if let Some(screen) = auth_store.screens.get_mut(screen_id) {
+        debug!(
+            "[{}] Updating token from {} to {}",
+            screen_id, screen.lounge_token, new_token
+        );
+        screen.lounge_token = new_token.to_string();
+
+        // Generate updated JSON
+        let json = match serde_json::to_string_pretty(&auth_store) {
+            Ok(j) => j,
+            Err(e) => {
+                error!("[{}] Failed to serialize auth data: {}", screen_id, e);
+
+                // Release the lock before returning
+                let _ = FileExt::unlock(&file);
+                return Err(Box::new(io::Error::new(io::ErrorKind::InvalidData, e)));
+            }
+        };
+
+        // Truncate the file and write new content
+        if let Err(e) = file.set_len(0) {
+            error!("[{}] Failed to truncate auth file: {}", screen_id, e);
+
+            // Release the lock before returning
+            let _ = FileExt::unlock(&file);
+            return Err(Box::new(e));
+        }
+
+        // Seek to the beginning
+        use std::io::Seek;
+        if let Err(e) = file.seek(std::io::SeekFrom::Start(0)) {
+            error!(
+                "[{}] Failed to seek to beginning of auth file: {}",
+                screen_id, e
+            );
+
+            // Release the lock before returning
+            let _ = FileExt::unlock(&file);
+            return Err(Box::new(e));
+        }
+
+        // Write the updated content
+        if let Err(e) =
+            std::io::Write::write_all(&mut std::io::BufWriter::new(&file), json.as_bytes())
+        {
+            error!("[{}] Failed to write updated auth data: {}", screen_id, e);
+
+            // Release the lock before returning
+            let _ = FileExt::unlock(&file);
+            return Err(Box::new(e));
+        }
+
+        // Explicitly release the lock
+        if let Err(e) = fs2::FileExt::unlock(&file) {
+            warn!("[{}] Failed to release file lock: {}", screen_id, e);
+            // Continue since the file will be unlocked when it's closed anyway
+        }
+
+        info!(
+            "[{}] Successfully updated lounge token in auth store",
+            screen_id
+        );
+        Ok(())
+    } else {
+        // Release the lock before returning
+        let _ = FileExt::unlock(&file);
+
+        let err = io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Screen {} not found in auth store", screen_id),
+        );
+        error!("[{}] Screen not found in auth store", screen_id);
+        Err(Box::new(err))
+    }
+}
+
 // Create client by pairing with a screen
 async fn create_client_with_pairing(
     pairing_code: &str,
@@ -425,6 +580,15 @@ async fn create_client_with_pairing(
         "Rust YouTube Controller",
         None,
     );
+
+    // Set the token refresh callback
+    client
+        .set_token_refresh_callback(move |screen_id, new_token| {
+            if let Err(e) = update_token_in_auth_store(screen_id, new_token) {
+                error!("[{}] Error updating token in auth store: {}", screen_id, e);
+            }
+        })
+        .await;
 
     // Store auth data for next time
     let mut auth_store = load_auth().unwrap_or_default();
@@ -518,6 +682,15 @@ async fn create_clients_from_stored_auth() -> Result<Vec<LoungeClient>, Box<dyn 
             Some(stored_screen.device_id.as_str()),
         );
 
+        // Set the token refresh callback
+        client
+            .set_token_refresh_callback(move |screen_id, new_token| {
+                if let Err(e) = update_token_in_auth_store(screen_id, new_token) {
+                    error!("[{}] Error updating token in auth store: {}", screen_id, e);
+                }
+            })
+            .await;
+
         info!(
             "Created client for screen: {} (ID: {})",
             stored_screen.name.as_deref().unwrap_or("Unknown"),
@@ -544,6 +717,20 @@ async fn create_clients_from_stored_auth() -> Result<Vec<LoungeClient>, Box<dyn 
 
 // Save auth data to file
 fn save_auth(auth: &AuthStore) -> io::Result<()> {
+    // Acquire the mutex lock to ensure only one thread tries to update at a time
+    let _guard = match AUTH_FILE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            error!("Failed to acquire lock for auth file: {}", e);
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Lock acquisition failed: {}", e),
+            ));
+        }
+    };
+
+    debug!("Acquired auth file lock for full save");
+
     // Generate JSON
     let json = match serde_json::to_string_pretty(auth) {
         Ok(j) => j,
@@ -555,33 +742,69 @@ fn save_auth(auth: &AuthStore) -> io::Result<()> {
 
     debug!("Serialized auth data to JSON, size: {} bytes", json.len());
 
-    // Create file
-    let mut file = match File::create(AUTH_FILENAME) {
-        Ok(f) => f,
+    // Open file with explicit locking
+    let file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(AUTH_FILENAME)
+    {
+        Ok(file) => file,
         Err(e) => {
-            error!("Failed to create auth file '{}': {}", AUTH_FILENAME, e);
+            error!("Failed to open auth file '{}': {}", AUTH_FILENAME, e);
             return Err(e);
         }
     };
 
+    // Acquire an exclusive lock on the file
+    if let Err(e) = file.lock_exclusive() {
+        error!("Failed to acquire file lock: {}", e);
+        return Err(e);
+    }
+
+    debug!("Acquired exclusive file lock for full save");
+
     // Write data
-    match file.write_all(json.as_bytes()) {
-        Ok(_) => {
-            info!("Successfully saved auth data to '{}'", AUTH_FILENAME);
-            Ok(())
-        }
-        Err(e) => {
+    let result = std::io::Write::write_all(&mut std::io::BufWriter::new(&file), json.as_bytes())
+        .map_err(|e| {
             error!(
                 "Failed to write data to auth file '{}': {}",
                 AUTH_FILENAME, e
             );
-            Err(e)
+            e
+        });
+
+    // Explicitly release the lock
+    if let Err(e) = fs2::FileExt::unlock(&file) {
+        warn!("Failed to release file lock: {}", e);
+        // Continue since the file will be unlocked when it's closed anyway
+    }
+
+    match result {
+        Ok(_) => {
+            info!("Successfully saved auth data to '{}'", AUTH_FILENAME);
+            Ok(())
         }
+        Err(e) => Err(e),
     }
 }
 
 // Load auth data from file
 fn load_auth() -> io::Result<AuthStore> {
+    // Acquire the mutex lock to ensure only one thread tries to read at a time
+    let _guard = match AUTH_FILE_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            error!("Failed to acquire lock for auth file: {}", e);
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Lock acquisition failed: {}", e),
+            ));
+        }
+    };
+
+    debug!("Acquired auth file lock for loading");
+
     let path = Path::new(AUTH_FILENAME);
     if !path.exists() {
         warn!("Auth file '{}' does not exist", AUTH_FILENAME);
@@ -598,39 +821,63 @@ fn load_auth() -> io::Result<AuthStore> {
         error!("Cannot read metadata for auth file '{}'", AUTH_FILENAME);
     }
 
-    // Open and read file
-    let mut file = match File::open(AUTH_FILENAME) {
-        Ok(f) => f,
+    // Open file with shared lock (for reading)
+    let file = match std::fs::OpenOptions::new().read(true).open(AUTH_FILENAME) {
+        Ok(file) => file,
         Err(e) => {
             error!("Failed to open auth file '{}': {}", AUTH_FILENAME, e);
             return Err(e);
         }
     };
 
-    let mut contents = String::new();
-    match file.read_to_string(&mut contents) {
-        Ok(bytes) => debug!("Read {} bytes from auth file", bytes),
-        Err(e) => {
-            error!("Failed to read auth file '{}': {}", AUTH_FILENAME, e);
-            return Err(e);
-        }
+    // Acquire a shared lock on the file
+    if let Err(e) = fs2::FileExt::lock_shared(&file) {
+        error!("Failed to acquire shared file lock: {}", e);
+        return Err(e);
     }
 
-    // Parse JSON
-    match serde_json::from_str(&contents) {
-        Ok(auth) => {
-            debug!("Successfully parsed auth data from '{}'", AUTH_FILENAME);
-            Ok(auth)
-        }
-        Err(e) => {
-            error!("Failed to parse auth file '{}': {}", AUTH_FILENAME, e);
-            // Preview the file content for debugging
-            if contents.len() > 100 {
-                error!("File content preview: {}...", &contents[..100]);
-            } else {
-                error!("File content: {}", contents);
+    debug!("Acquired shared file lock for reading");
+
+    // Read the file content
+    let mut contents = String::new();
+    let read_result =
+        std::io::Read::read_to_string(&mut std::io::BufReader::new(&file), &mut contents).map_err(
+            |e| {
+                error!("Failed to read auth file '{}': {}", AUTH_FILENAME, e);
+                e
+            },
+        );
+
+    // Parse JSON if read was successful
+    let parse_result = match read_result {
+        Ok(bytes) => {
+            debug!("Read {} bytes from auth file", bytes);
+
+            match serde_json::from_str(&contents) {
+                Ok(auth) => {
+                    debug!("Successfully parsed auth data from '{}'", AUTH_FILENAME);
+                    Ok(auth)
+                }
+                Err(e) => {
+                    error!("Failed to parse auth file '{}': {}", AUTH_FILENAME, e);
+                    // Preview the file content for debugging
+                    if contents.len() > 100 {
+                        error!("File content preview: {}...", &contents[..100]);
+                    } else {
+                        error!("File content: {}", contents);
+                    }
+                    Err(io::Error::new(io::ErrorKind::InvalidData, e))
+                }
             }
-            Err(io::Error::new(io::ErrorKind::InvalidData, e))
         }
+        Err(e) => Err(e),
+    };
+
+    // Explicitly release the lock
+    if let Err(e) = fs2::FileExt::unlock(&file) {
+        warn!("Failed to release file lock: {}", e);
+        // Continue since the file will be unlocked when it's closed anyway
     }
+
+    parse_result
 }

@@ -8,7 +8,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand, PlaybackStatus, Screen};
+use youtube_lounge_rs::{LoungeClient, LoungeEvent, PlaybackCommand, Screen};
 
 // Structure to store screen authentication data
 #[derive(Serialize, Deserialize, Default)]
