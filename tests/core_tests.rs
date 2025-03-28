@@ -143,7 +143,7 @@ fn test_youtube_parse_module() {
 #[tokio::test]
 async fn test_client_constructors() {
     // Test new client with auto-generated device ID
-    let client = LoungeClient::new("test_screen_id", "test_token", "Test Device", None);
+    let client = LoungeClient::new("test_screen_id", "test_token", "Test Device", None, None);
     let device_id = client.device_id();
     assert!(!device_id.is_empty());
 
@@ -154,6 +154,7 @@ async fn test_client_constructors() {
         "test_token",
         "Test Device",
         Some(test_device_id),
+        None, // Explicitly pass None to use the default client
     );
     assert_eq!(client.device_id(), test_device_id);
 

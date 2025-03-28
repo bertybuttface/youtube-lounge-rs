@@ -579,6 +579,7 @@ async fn create_client_with_pairing(
         &screen.lounge_token,
         "Rust YouTube Controller",
         None,
+        None, // Explicitly pass None to use the default client
     );
 
     // Set the token refresh callback
@@ -680,6 +681,7 @@ async fn create_clients_from_stored_auth() -> Result<Vec<LoungeClient>, Box<dyn 
                 .as_deref()
                 .unwrap_or("Rust YouTube Controller"),
             Some(stored_screen.device_id.as_str()),
+            None, // Explicitly pass None to use the default client
         );
 
         // Set the token refresh callback

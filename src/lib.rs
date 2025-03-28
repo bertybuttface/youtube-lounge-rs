@@ -605,14 +605,16 @@ pub struct LoungeClient {
 
 impl LoungeClient {
     /// Create a new LoungeClient. If a device_id is provided, it will be used;
-    /// otherwise, a new UUID is generated.
+    /// otherwise, a new UUID is generated. Optionally accepts a custom reqwest client
+    /// for connection reuse and shared configuration.
     pub fn new(
         screen_id: &str,
         lounge_token: &str,
         device_name: &str,
         device_id: Option<&str>,
+        custom_client: Option<Client>,
     ) -> Self {
-        let client = Client::new();
+        let client = custom_client.unwrap_or_default();
         let device_id = device_id.map_or_else(|| Uuid::new_v4().to_string(), ToString::to_string);
         let (event_tx, _) = broadcast::channel(100);
 

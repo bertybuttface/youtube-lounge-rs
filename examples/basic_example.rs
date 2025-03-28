@@ -420,6 +420,7 @@ async fn create_client_with_pairing(
         &screen.lounge_token,
         "Rust YouTube Controller",
         None,
+        None, // Explicitly pass None to use the default client
     );
 
     // Store auth data for next time
@@ -494,6 +495,7 @@ async fn create_client_from_stored_auth() -> Result<LoungeClient, Box<dyn Error 
             .as_deref()
             .unwrap_or("Rust YouTube Controller"),
         Some(stored_screen.device_id.as_str()),
+        None, // Explicitly pass None to use the default client
     );
 
     info!(
