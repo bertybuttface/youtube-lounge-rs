@@ -1,6 +1,6 @@
 [package]
 name = "youtube_lounge_rs"
-version = "6.0.1"
+version = "6.0.2"
 edition = "2021"
 authors = ["Anonymous <anon@example.com>"]
 description = "A Rust client for the YouTube Lounge API to control YouTube on TV devices"
