@@ -55,15 +55,15 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut pairing_code = None;
     let mut log_level = Level::INFO;
 
-    // Simple argument parsing
-    for i in 1..args.len() {
-        match args[i].as_str() {
-            "--trace" => log_level = Level::TRACE,
+    // Simple argument parsing, skip first argument
+    for arg in args.iter().skip(1) {
+        match arg.as_str() {
+            "--trace" | "-t" => log_level = Level::TRACE,
             "--debug" | "-d" => log_level = Level::DEBUG,
             "--info" | "-i" => log_level = Level::INFO,
             "--warn" | "-w" => log_level = Level::WARN,
             "--error" | "-e" => log_level = Level::ERROR,
-            _ if pairing_code.is_none() => pairing_code = Some(args[i].clone()),
+            _ if pairing_code.is_none() => pairing_code = Some(arg.clone()),
             _ => {}
         }
     }
