@@ -1,14 +1,18 @@
 use bytes::BytesMut;
+use lazy_static::lazy_static;
+use regex::Regex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::error::Error;
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
 use thiserror::Error;
-use tokio::sync::broadcast;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, RwLock};
 use tokio::time::{sleep, timeout, Duration};
 use tokio_util::codec::Decoder;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 const BUFFER_CAPACITY: usize = 16 * 1024; // 16KB initial buffer capacity
@@ -17,12 +21,9 @@ const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(32); // Wait 32s for ne
 // Type alias for the optional callback function pointer for clarity
 type TokenCallback = Option<Box<dyn Fn(&str, &str) + Send + Sync + 'static>>;
 
-// Struct to hold the state that needs to be shared and mutated async
-// #[derive(Debug)] // Add Debug for easier inspection if needed (will need to fix errors)
 struct InnerState {
     lounge_token: String,
     token_refresh_callback: TokenCallback,
-    aid: Option<String>,
 }
 
 // Basic error handling with thiserror
@@ -99,7 +100,6 @@ impl Decoder for LoungeCodec {
                                     "Invalid UTF-8 in size header",
                                 )
                             })?;
-
                         let size_str = size_str.trim();
 
                         // Ensure it’s numeric
@@ -155,7 +155,7 @@ impl Decoder for LoungeCodec {
     }
 }
 
-// Models
+// Model Structs
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Screen {
@@ -450,7 +450,7 @@ pub enum LoungeEvent {
     /// A synthetic event that combines NowPlaying and StateChange events
     /// for the same video (matched by CPN)
     PlaybackSession(PlaybackSession),
-    LoungeStatus(Vec<Device>, Option<String>), // Now includes queue_id
+    LoungeStatus(Vec<Device>, Option<String>),
     ScreenDisconnected,
     SessionEstablished,
     AdStateChange(AdState),
@@ -536,8 +536,8 @@ impl PlaybackSession {
 struct SessionState {
     sid: Option<String>,
     gsessionid: Option<String>,
-    rid: i32,
-    command_offset: i32,
+    rid: Arc<AtomicU32>,
+    command_offset: Arc<AtomicU32>,
 }
 
 impl SessionState {
@@ -545,19 +545,16 @@ impl SessionState {
         Self {
             sid: None,
             gsessionid: None,
-            rid: 1,
-            command_offset: 0,
+            rid: Arc::new(AtomicU32::new(1)),
+            command_offset: Arc::new(AtomicU32::new(0)),
         }
     }
 
-    fn increment_rid(&mut self) -> i32 {
-        self.rid += 1;
-        self.rid
+    fn increment_rid(&self) -> u32 {
+        self.rid.fetch_add(1, Ordering::SeqCst)
     }
-
-    fn increment_offset(&mut self) -> i32 {
-        self.command_offset += 1;
-        self.command_offset
+    fn increment_offset(&self) -> u32 {
+        self.command_offset.fetch_add(1, Ordering::SeqCst)
     }
 }
 
@@ -591,7 +588,7 @@ impl SessionState {
 /// - `WARN`: Shows warnings and non-critical errors
 /// - `ERROR`: Shows critical failures and error conditions
 pub struct LoungeClient {
-    client: Client,
+    client: Arc<Client>,
     device_id: String,
     screen_id: String,
     device_name: String,
@@ -599,8 +596,9 @@ pub struct LoungeClient {
     event_sender: broadcast::Sender<LoungeEvent>,
     connected: bool,
     // Track latest NowPlaying with CPN for PlaybackSession generation
-    latest_now_playing: Arc<Mutex<Option<NowPlaying>>>, // Wrap in Arc<Mutex>
-    shared_state: Arc<Mutex<InnerState>>,               // Add the shared state holder
+    latest_now_playing: Arc<RwLock<Option<NowPlaying>>>,
+    shared_state: Arc<RwLock<InnerState>>,
+    aid_atomic: Arc<AtomicU32>,
 }
 
 impl LoungeClient {
@@ -612,9 +610,17 @@ impl LoungeClient {
         lounge_token: &str,
         device_name: &str,
         device_id: Option<&str>,
-        custom_client: Option<Client>,
+        custom_client: Option<Arc<Client>>,
     ) -> Self {
-        let client = custom_client.unwrap_or_default();
+        let client = custom_client.unwrap_or_else(|| {
+            Arc::new(
+                Client::builder()
+                    .pool_idle_timeout(Some(Duration::from_secs(600)))
+                    .pool_max_idle_per_host(256)
+                    .build()
+                    .unwrap(),
+            )
+        });
         let device_id = device_id.map_or_else(|| Uuid::new_v4().to_string(), ToString::to_string);
         let (event_tx, _) = broadcast::channel(100);
 
@@ -622,7 +628,6 @@ impl LoungeClient {
         let initial_state = InnerState {
             lounge_token: lounge_token.to_string(),
             token_refresh_callback: None, // Will be set later via method
-            aid: None,
         };
 
         Self {
@@ -633,18 +638,17 @@ impl LoungeClient {
             session_state: SessionState::new(),
             event_sender: event_tx,
             connected: false,
-            latest_now_playing: Arc::new(Mutex::new(None)), // Initialize Arc<Mutex>
-            shared_state: Arc::new(Mutex::new(initial_state)), // Initialize Arc<Mutex>
+            latest_now_playing: Arc::new(RwLock::new(None)),
+            shared_state: Arc::new(RwLock::new(initial_state)),
+            aid_atomic: Arc::new(AtomicU32::new(0)),
         }
     }
 
     pub async fn set_token_refresh_callback<F>(&self, callback: F)
-    // Now takes &self, is async
     where
         F: Fn(&str, &str) + Send + Sync + 'static,
     {
-        // Lock the shared state to update the callback
-        let mut state_guard = self.shared_state.lock().await;
+        let mut state_guard = self.shared_state.write().await;
         state_guard.token_refresh_callback = Some(Box::new(callback));
         debug!("Token refresh callback set.");
     }
@@ -704,7 +708,9 @@ impl LoungeClient {
             .await?;
 
         if !response.status().is_success() {
-            let error_msg = format!("Failed to refresh token: {}", response.status());
+            let status = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+            let error_msg = format!("Failed to refresh token: {}: {}", status, body_text);
             error!("{}", error_msg);
             return Err(LoungeError::InvalidResponse(error_msg));
         }
@@ -732,14 +738,11 @@ impl LoungeClient {
             self.screen_id
         );
 
-        // --- Lock, clone token, unlock ---
         let token = {
-            let state_guard = self.shared_state.lock().await;
+            let state_guard = self.shared_state.read().await;
             state_guard.lounge_token.clone()
-        }; // Lock released
-
-        let params = [("lounge_token", &token)]; // Use cloned token
-
+        };
+        let params = [("lounge_token", &token)];
         let response = self
             .client
             .post("https://www.youtube.com/api/lounge/pairing/get_screen_availability")
@@ -765,17 +768,15 @@ impl LoungeClient {
             Err(LoungeError::TokenExpired) => {
                 info!("Refreshing expired token (check_screen_availability_with_refresh)");
                 let screen = Self::refresh_lounge_token(&self.screen_id).await?;
-                // --- Lock, Update Token, Call Callback ---
                 {
-                    let mut state = self.shared_state.lock().await;
+                    let mut state = self.shared_state.write().await;
                     state.lounge_token = screen.lounge_token.clone();
                     debug!("Shared state updated with refreshed token.");
                     if let Some(ref callback) = state.token_refresh_callback {
                         debug!("Calling token refresh callback.");
                         callback(&self.screen_id, &screen.lounge_token);
                     }
-                } // Lock released
-                debug!("Retrying check_screen_availability");
+                }
                 self.check_screen_availability().await
             }
             Err(e) => Err(e),
@@ -787,6 +788,7 @@ impl LoungeClient {
         info!("Connecting to screen: {}", self.screen_id);
 
         // Reset session state
+        debug!("Resetting SessionState due to connect.");
         self.session_state = SessionState::new();
 
         let params = [
@@ -826,12 +828,9 @@ impl LoungeClient {
                 ));
             }
             status if !response.status().is_success() => {
-                let error_msg = format!("Failed to connect: {}", response.status());
-                error!("{}", error_msg);
-                debug!("Response status: {}", status);
-                // Optionally read body for more details if available
                 let body_text = response.text().await.unwrap_or_default();
-                error!("Response body: {}", body_text);
+                let error_msg = format!("Failed to connect: {}: {}", status, body_text);
+                error!("{}", error_msg);
                 return Err(LoungeError::InvalidResponse(error_msg));
             }
             _ => {} // Success, proceed
@@ -853,20 +852,8 @@ impl LoungeClient {
             sid.as_deref().unwrap_or("<none>")
         );
 
-        // Send session established event
-        if self.event_sender.receiver_count() > 0 {
-            debug!(
-                "Sending SessionEstablished event to {} receiver(s)",
-                self.event_sender.receiver_count()
-            );
-            let _ = self.event_sender.send(LoungeEvent::SessionEstablished);
-        }
-
-        // Start event subscription in background
-        info!("Starting event subscription task");
-        self.subscribe_to_events().await?;
-
-        info!("Successfully connected to screen: {}", self.screen_id);
+        let _ = self.event_sender.send(LoungeEvent::SessionEstablished);
+        self.subscribe_to_events_grouped().await?;
         Ok(())
     }
 
@@ -877,38 +864,40 @@ impl LoungeClient {
             Err(LoungeError::TokenExpired) => {
                 info!("Refreshing expired token (connect_with_refresh)");
                 let screen = Self::refresh_lounge_token(&self.screen_id).await?;
-                // --- Lock, Update Token, Call Callback ---
                 {
-                    let mut state = self.shared_state.lock().await;
+                    let mut state = self.shared_state.write().await;
                     state.lounge_token = screen.lounge_token.clone();
                     debug!("Shared state updated with refreshed token.");
                     if let Some(ref callback) = state.token_refresh_callback {
                         debug!("Calling token refresh callback.");
                         callback(&self.screen_id, &screen.lounge_token);
                     }
-                } // Lock released
-                debug!("Retrying connect");
+                    debug!("Retrying connect");
+                }
                 self.connect().await
             }
             Err(e) => Err(e),
         }
     }
 
-    async fn subscribe_to_events(&self) -> Result<(), LoungeError> {
+    async fn subscribe_to_events_grouped(&self) -> Result<(), LoungeError> {
+        #[derive(Clone)]
+        struct TaskArcs {
+            latest_now_playing: Arc<RwLock<Option<NowPlaying>>>,
+            shared_state: Arc<RwLock<InnerState>>,
+            aid_atomic: Arc<AtomicU32>,
+        }
+        let arcs = TaskArcs {
+            latest_now_playing: self.latest_now_playing.clone(),
+            shared_state: self.shared_state.clone(),
+            aid_atomic: self.aid_atomic.clone(),
+        };
         let client = self.client.clone();
         let device_name = self.device_name.clone();
         let screen_id = self.screen_id.clone();
         let event_sender = self.event_sender.clone();
-        // Clone session state for the task to manage its AID/RID/offset independently
-        let session_state = self.session_state.clone(); // Task manages its own RID/offset copy
-
-        // --- Clone Arcs for the task ---
-        let latest_now_playing_arc = self.latest_now_playing.clone();
-        let shared_state_arc = self.shared_state.clone();
-        // --- End Arc cloning ---
-
+        let session_state = self.session_state.clone();
         tokio::spawn(async move {
-            // Move cloned Arcs into the task
             debug!("Starting event subscriber task");
             loop {
                 // Check task's local session validity
@@ -921,40 +910,26 @@ impl LoungeClient {
                         break; // Exit loop if no session
                     }
                 };
-
-                // --- Lock, clone token, unlock (inside loop for potential updates) ---
                 let current_lounge_token = {
-                    let state_guard = shared_state_arc.lock().await;
+                    let state_guard = arcs.shared_state.read().await;
                     state_guard.lounge_token.clone()
-                }; // Lock released
-
-                // Build parameters for the event bind request
-                let mut params = HashMap::new();
-                params.insert("SID", sid);
-                params.insert("gsessionid", gsessionid);
-                params.insert("RID", "rpc"); // Use "rpc" for event channel
-                params.insert("VER", "8");
-                params.insert("v", "2");
-                params.insert("device", "REMOTE_CONTROL");
-                params.insert("app", "youtube-desktop"); // Or "web"? Check captures.
-                params.insert("loungeIdToken", current_lounge_token.as_str()); // Use current token
-                params.insert("name", device_name.as_str());
-                params.insert("CI", "0"); // Use 0 for long polling start
-                params.insert("TYPE", "xmlhttp"); // Standard for browser long-polling
-
-                // Add AID if task's session state has received one
-                // --- Lock to READ aid ---
-                let current_aid_opt: Option<String> = {
-                    let guard = shared_state_arc.lock().await;
-                    guard.aid.clone()
-                }; // Lock released
-
-                // --- Get &str using as_deref or default ---
-                // .as_deref() converts Option<String> -> Option<&str> by deref-coercing String to &str
-                let aid_value_to_insert: &str = current_aid_opt.as_deref().unwrap_or("0");
-
-                // --- Insert the valid &str into params ---
-                params.insert("AID", aid_value_to_insert);
+                };
+                let current_aid_val = arcs.aid_atomic.load(Ordering::SeqCst);
+                let aid_string = current_aid_val.to_string();
+                let params = [
+                    ("SID", sid),
+                    ("gsessionid", gsessionid),
+                    ("RID", "rpc"),
+                    ("VER", "8"),
+                    ("v", "2"),
+                    ("device", "REMOTE_CONTROL"),
+                    ("app", "youtube-desktop"),
+                    ("loungeIdToken", current_lounge_token.as_str()),
+                    ("name", device_name.as_str()),
+                    ("CI", "0"),
+                    ("TYPE", "xmlhttp"),
+                    ("AID", aid_string.as_str()),
+                ];
 
                 debug!(?params, "Sending event subscription request (long poll)");
                 let response = match client
@@ -975,22 +950,23 @@ impl LoungeClient {
                 // --- Check Status Codes ---
                 match response.status().as_u16() {
                     400 | 404 | 410 => {
+                        let status = response.status(); // get it BEFORE .text()
+                        let body_text = response.text().await.unwrap_or_default();
                         error!(
-                            "Event task received terminal status ({}), disconnecting.",
-                            response.status()
+                            "Terminal HTTP status from server during event poll; disconnecting. Status: {}, Body: {}",
+                            status,
+                            body_text
                         );
                         let _ = event_sender.send(LoungeEvent::ScreenDisconnected);
-                        break; // Stop the task loop
+                        break;
                     }
                     401 => {
                         warn!("Event task received 401 Unauthorized, attempting token refresh...");
                         match LoungeClient::refresh_lounge_token(&screen_id).await {
                             Ok(screen) => {
                                 info!("Successfully refreshed token for screen_id: {}", screen_id);
-                                // --- Lock Shared State, Update Token, Call Callback ---
                                 {
-                                    // Scope for lock guard
-                                    let mut state = shared_state_arc.lock().await;
+                                    let mut state = arcs.shared_state.write().await;
                                     let old_token_preview =
                                         state.lounge_token.chars().take(8).collect::<String>();
                                     state.lounge_token = screen.lounge_token.clone();
@@ -1001,7 +977,7 @@ impl LoungeClient {
                                     } else {
                                         debug!("No token refresh callback set.");
                                     }
-                                } // Lock released here
+                                }
                                 debug!("Retrying event subscription after token refresh.");
                                 continue; // Retry the loop immediately
                             }
@@ -1043,92 +1019,71 @@ impl LoungeClient {
                             if chunk.is_empty() {
                                 // Handle empty chunk if necessary, maybe just ignore
                                 debug!("Received empty chunk.");
-                                // continue 'stream_loop; // Or potentially break if it signals end? Test behavior.
-                            }
-
-                            // Add data to buffer
-                            buffer.extend_from_slice(&chunk);
-
-                            // Decode and process all available messages in the buffer
-                            loop {
-                                // Inner decode loop
-                                match codec.decode(&mut buffer) {
-                                    Ok(Some(message)) => {
-                                        // Successfully decoded a message, process it
-                                        // (This now includes handling JSON noop messages gracefully)
-                                        process_event_chunk(
-                                            &message,
-                                            &event_sender,
-                                            &latest_now_playing_arc,
-                                            &shared_state_arc,
-                                        )
-                                        .await;
-                                    }
-                                    Ok(None) => {
-                                        // Codec needs more data, break decode loop and wait for next chunk
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        // Decoding error, likely corrupt data
-                                        error!(error = %e, "Error decoding event message stream");
-                                        buffer.clear(); // Clear potentially bad data
-                                                        // Decide whether to break inner decode loop or outer stream loop.
-                                                        // Breaking outer seems safer to force a reconnect on decode errors.
-                                        break 'stream_loop;
+                            } else {
+                                buffer.extend_from_slice(&chunk);
+                                loop {
+                                    match codec.decode(&mut buffer) {
+                                        Ok(Some(message)) => {
+                                            process_event_chunk(
+                                                &message,
+                                                &event_sender,
+                                                &arcs.latest_now_playing,
+                                                &arcs.shared_state,
+                                                &arcs.aid_atomic,
+                                            )
+                                            .await;
+                                        }
+                                        Ok(None) => break,
+                                        Err(e) => {
+                                            error!(error = %e, "Error decoding event message stream");
+                                            buffer.clear();
+                                            break 'stream_loop;
+                                        }
                                     }
                                 }
-                            } // End inner decode loop
-
-                            // If the buffer is now empty BUT its capacity is much larger than needed,
-                            // replace it with a new one to reclaim memory.
-                            // This is less aggressive than shrinking but avoids holding huge unused allocations.
-                            if buffer.is_empty() && buffer.capacity() > BUFFER_CAPACITY * 4 {
-                                debug!(
-                                    "Buffer capacity ({}) exceeds threshold ({}), replacing with new buffer.",
-                                    buffer.capacity(),
-                                    BUFFER_CAPACITY * 4
-                                );
-                                // Replace the large buffer with a fresh one
-                                buffer = BytesMut::with_capacity(BUFFER_CAPACITY);
+                                if buffer.is_empty() && buffer.capacity() > BUFFER_CAPACITY * 4 {
+                                    debug!(
+                                        "Buffer capacity ({}) exceeds threshold ({}), replacing with new buffer.",
+                                        buffer.capacity(),
+                                        BUFFER_CAPACITY * 4
+                                    );
+                                    buffer = BytesMut::with_capacity(BUFFER_CAPACITY);
+                                }
                             }
-                            // If we successfully processed the chunk, the 'stream_loop continues,
-                            // effectively waiting for the next chunk with a fresh timeout.
                         }
 
                         // --- Case 2: Stream returned an error within timeout ---
                         Ok(Some(Err(e))) => {
-                            // An error occurred while reading the stream (e.g., network issue, connection reset)
-                            error!(error = %e, "Error reading event stream chunk");
-                            break 'stream_loop; // Break inner loop to force reconnect via outer loop
+                            error!(
+                                err = %e,
+                                cause = ?e.source(),
+                                is_timeout = e.is_timeout(),
+                                is_connect = e.is_connect(),
+                                status = ?e.status(),
+                                "Network/decode failure in event stream chunk, reconnecting."
+                            );
+                            break 'stream_loop;
                         }
 
                         // --- Case 3: Stream ended gracefully within timeout ---
                         Ok(None) => {
-                            // The server closed the connection cleanly.
-                            debug!("Event stream ended gracefully by server.");
-                            break 'stream_loop; // Break inner loop to force reconnect via outer loop
+                            debug!(
+                                "Event stream ended gracefully by server (EOF) -- will reconnect."
+                            );
+                            break 'stream_loop;
                         }
 
-                        // --- Case 4: `tokio::time::timeout` expired ---
+                        // --- Case 4: Inactivity Timeout expired ---
                         Err(_) => {
-                            // Inactivity detected! No data received for INACTIVITY_TIMEOUT duration.
                             debug!(
                                 "Inactivity detected (no data for {}s), reconnecting.",
                                 INACTIVITY_TIMEOUT.as_secs()
                             );
-                            break 'stream_loop; // Break inner loop to force reconnect via outer loop
+                            break 'stream_loop;
                         }
-                    } // End match timeout result
-                } // End 'stream_loop
-
-                // This point is reached if 'stream_loop' was broken (due to error, stream end, or inactivity timeout)
-                debug!("Event stream poll cycle finished, reconnecting for next poll...");
-                // The outer 'loop' will automatically continue, initiating a new connection attempt.
-                // Optional short sleep before reconnecting? Usually not necessary unless hammering the server.
-                // sleep(Duration::from_millis(100)).await;
-            } // End main task loop
-
-            warn!("Event subscriber task finished.");
+                    }
+                }
+            }
         });
         Ok(()) // Return Ok: task was spawned successfully
     }
@@ -1139,9 +1094,6 @@ impl LoungeClient {
             warn!("Attempted to send command while not connected");
             return Err(LoungeError::ConnectionClosed);
         }
-
-        // Clone session details needed for request
-        // Use ok_or to convert Option to Result early
         let sid = self
             .session_state
             .sid
@@ -1165,19 +1117,14 @@ impl LoungeClient {
             "Sending command: {} (RID: {}, offset: {})",
             command_name, rid, ofs
         );
-
-        // --- Lock, clone token, unlock ---
         let token = {
-            let state_guard = self.shared_state.lock().await;
+            let state_guard = self.shared_state.read().await;
             state_guard.lounge_token.clone()
-        }; // Lock released
-
-        // Form body as Vec of (&str, String) for reqwest .form()
-        let mut form_fields: Vec<(&str, String)> = vec![
-            ("count", "1".to_string()),
-            ("ofs", ofs.to_string()), // Use main instance's offset
-            ("req0__sc", command_name.to_string()),
-        ];
+        };
+        let mut form_fields: Vec<(&str, String)> = Vec::with_capacity(16);
+        form_fields.push(("count", "1".to_string()));
+        form_fields.push(("ofs", ofs.to_string()));
+        form_fields.push(("req0__sc", command_name.to_string()));
 
         match &command {
             PlaybackCommand::SetPlaylist {
@@ -1245,12 +1192,7 @@ impl LoungeClient {
 
             _ => {}
         }
-
-        // --- Lock to READ aid ---
-        let current_aid = {
-            let guard = self.shared_state.lock().await;
-            guard.aid.clone()
-        }; // Lock released
+        let current_aid = self.aid_atomic.load(Ordering::SeqCst);
 
         // Build query parameters
         let params = [
@@ -1258,11 +1200,11 @@ impl LoungeClient {
             ("gsessionid", gsessionid.as_str()), // Use cloned GSESSIONID
             ("RID", &rid.to_string()),           // Use main instance's RID
             ("VER", "8"),
-            ("v", "2"),                                     // v=2 common for commands
-            ("TYPE", "bind"),                               // TYPE=bind common for commands
-            ("t", "1"), // Common param, maybe timestamp related?
-            ("AID", current_aid.as_deref().unwrap_or("0")), // Use current_aid, maybe default to "0"
-            ("CI", "0"), // Typically 0 for commands
+            ("v", "2"),                        // v=2 common for commands
+            ("TYPE", "bind"),                  // TYPE=bind common for commands
+            ("t", "1"),                        // Common param, maybe timestamp related?
+            ("AID", &current_aid.to_string()), // Use current_aid, maybe default to "0"
+            ("CI", "0"),                       // Typically 0 for commands
             // Include device context for commands?
             ("name", self.device_name.as_str()),
             ("id", self.device_id.as_str()),
@@ -1276,7 +1218,7 @@ impl LoungeClient {
             .client
             .post("https://www.youtube.com/api/lounge/bc/bind")
             .query(&params)
-            .form(&form_fields) // 💡 magic happens here — safe, clean, escaped
+            .form(&form_fields)
             .send()
             .await?;
 
@@ -1319,12 +1261,12 @@ impl LoungeClient {
                 return Err(LoungeError::ConnectionClosed);
             }
             status if !response.status().is_success() => {
-                let error_msg = format!("Command failed: {}", response.status());
-                error!("{} for command: {}", error_msg, command_name);
-                debug!("Response status: {}", status);
-                // Optionally read body
                 let body_text = response.text().await.unwrap_or_default();
-                error!("Response body: {}", body_text);
+                let error_msg = format!(
+                    "Command '{}' failed with status {} and response body:\n{}",
+                    command_name, status, body_text
+                );
+                error!("{}", error_msg);
                 return Err(LoungeError::InvalidResponse(error_msg));
             }
             _ => {} // Success
@@ -1347,16 +1289,15 @@ impl LoungeClient {
                     command.name()
                 );
                 let screen = Self::refresh_lounge_token(&self.screen_id).await?;
-                // --- Lock, Update Token, Call Callback ---
                 {
-                    let mut state = self.shared_state.lock().await;
+                    let mut state = self.shared_state.write().await;
                     state.lounge_token = screen.lounge_token.clone();
                     debug!("Shared state updated with refreshed token.");
                     if let Some(ref callback) = state.token_refresh_callback {
                         debug!("Calling token refresh callback.");
                         callback(&self.screen_id, &screen.lounge_token);
                     }
-                } // Lock released
+                }
                 debug!("Retrying send_command for '{}'", command.name());
                 self.send_command(command).await
             }
@@ -1384,12 +1325,10 @@ impl LoungeClient {
             // Use main instance's RID sequence for the terminate command
             let rid = self.session_state.increment_rid();
 
-            // --- Lock, clone token, unlock ---
             let token = {
-                let state_guard = self.shared_state.lock().await;
+                let state_guard = self.shared_state.read().await;
                 state_guard.lounge_token.clone()
-            }; // Lock released
-
+            };
             // Prepare parameters for terminate request
             let params = [
                 ("SID", sid.as_str()),
@@ -1430,6 +1369,7 @@ impl LoungeClient {
         }
 
         // Clear session state after attempting disconnect
+        debug!("Clearing SessionState due to disconnect");
         self.session_state = SessionState::new();
 
         // Send disconnect event AFTER marking disconnected and attempting termination
@@ -1443,13 +1383,11 @@ impl LoungeClient {
 
     // Build form data for initial connection
     async fn build_connect_form_data(&self) -> Result<String, LoungeError> {
-        // --- Lock, clone token, unlock ---
         let token = {
-            let state_guard = self.shared_state.lock().await;
+            let state_guard = self.shared_state.read().await;
             state_guard.lounge_token.clone()
-        }; // Lock released
-
-        let form_fields = vec![
+        };
+        let form_fields = [
             ("app", "web"),
             ("mdx-version", "3"),
             ("name", &self.device_name),
@@ -1468,7 +1406,7 @@ impl LoungeClient {
             ("loungeIdToken", token.as_str()), // Use cloned token
         ];
 
-        serde_urlencoded::to_string(&form_fields).map_err(LoungeError::UrlEncodingFailed)
+        serde_urlencoded::to_string(form_fields).map_err(LoungeError::UrlEncodingFailed)
     }
 
     // Get video thumbnail URL
@@ -1564,25 +1502,18 @@ impl LoungeClient {
     }
 }
 
-// Helper function to extract session IDs
+lazy_static! {
+    static ref SID_RE: Regex = Regex::new(r#"\["c","([^"]*)""#).unwrap();
+    static ref GSESSIONID_RE: Regex = Regex::new(r#"\["S","([^"]*)""#).unwrap();
+}
 fn extract_session_ids(body: &[u8]) -> Result<(Option<String>, Option<String>), LoungeError> {
     let full_response = String::from_utf8_lossy(body);
-
-    // Helper function to extract value between markers
-    fn extract_value(text: &str, marker: &str) -> Option<String> {
-        text.find(marker).and_then(|idx| {
-            let start = idx + marker.len();
-            text[start..]
-                .find('\"')
-                .map(|end_idx| text[start..start + end_idx].to_string())
-        })
-    }
-
-    // Extract sid and gsessionid
-    let sid = extract_value(&full_response, "[\"c\",\"");
-    let gsessionid = extract_value(&full_response, "[\"S\",\"");
-
-    // Check if we found the session IDs using pattern matching
+    let sid = SID_RE
+        .captures(&full_response)
+        .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()));
+    let gsessionid = GSESSIONID_RE
+        .captures(&full_response)
+        .and_then(|cap| cap.get(1).map(|m| m.as_str().to_string()));
     match (sid, gsessionid) {
         (Some(sid), Some(gsessionid)) => Ok((Some(sid), Some(gsessionid))),
         _ => Err(LoungeError::InvalidResponse(
@@ -1594,8 +1525,9 @@ fn extract_session_ids(body: &[u8]) -> Result<(Option<String>, Option<String>), 
 async fn process_event_chunk(
     chunk: &str,
     sender: &broadcast::Sender<LoungeEvent>,
-    latest_now_playing_arc: &Arc<Mutex<Option<NowPlaying>>>, // Accept Arc ref
-    shared_state_arc: &Arc<Mutex<InnerState>>,
+    latest_now_playing_arc: &Arc<RwLock<Option<NowPlaying>>>,
+    _shared_state_arc: &Arc<RwLock<InnerState>>,
+    aid_atomic: &Arc<AtomicU32>,
 ) {
     // Helper function for deserializing with error logging
     fn deserialize_with_logging<T>(
@@ -1637,10 +1569,7 @@ async fn process_event_chunk(
             continue;
         }
         if let Some(event_id) = event.first().and_then(|id| id.as_i64()) {
-            // --- Lock to WRITE aid ---
-            let mut state_guard = shared_state_arc.lock().await;
-            state_guard.aid = Some(event_id.to_string());
-            // --- Lock released ---
+            aid_atomic.store(event_id as u32, Ordering::SeqCst);
         }
 
         if let Some(event_array) = event.get(1).and_then(|v| v.as_array()) {
@@ -1649,7 +1578,7 @@ async fn process_event_chunk(
                 // Should only contain ["noop"]
                 if let Some(event_type) = event_array.first().and_then(|t| t.as_str()) {
                     if event_type == "noop" {
-                        debug!("Received JSON noop event, connection alive.");
+                        trace!("Received JSON noop event, connection alive.");
                         continue; // Skip further processing for this specific event
                     } else {
                         debug!(event_type = %event_type, "Received single-element event array");
@@ -1669,12 +1598,10 @@ async fn process_event_chunk(
                             deserialize_with_logging::<PlaybackState>(event_type, payload)
                         {
                             let _ = sender.send(LoungeEvent::StateChange(state.clone()));
-                            // --- Lock to READ latest_now_playing ---
                             let latest_np = {
-                                // Scope for read lock
-                                let guard = latest_now_playing_arc.lock().await;
-                                guard.clone() // Clone Option<NowPlaying>
-                            }; // Read lock released
+                                let guard = latest_now_playing_arc.read().await;
+                                guard.clone()
+                            };
                             if let Some(np) = latest_np.as_ref() {
                                 if let (Some(state_cpn), Some(np_cpn)) = (&state.cpn, &np.cpn) {
                                     if state_cpn == np_cpn {
@@ -1703,24 +1630,18 @@ async fn process_event_chunk(
 
                             // Always send the raw event
                             let _ = sender.send(LoungeEvent::NowPlaying(now_playing.clone()));
-
-                            // --- Lock to WRITE latest_now_playing ---
                             if now_playing.cpn.is_some() {
-                                let mut guard = latest_now_playing_arc.lock().await;
+                                let mut guard = latest_now_playing_arc.write().await;
                                 *guard = Some(now_playing.clone());
-                            } // Write lock released
-
+                            }
                             // Create and send a PlaybackSession if possible
                             match now_playing.state.as_str() {
                                 // Handle stop events (-1)
                                 "-1" if now_playing.video_id.is_empty() => {
-                                    // --- Lock to READ latest_now_playing_arc ---
                                     let prev_np_opt = {
-                                        // Scope for read lock
-                                        let guard = latest_now_playing_arc.lock().await;
-                                        guard.clone() // Clone Option<NowPlaying>
-                                    }; // Read lock released
-                                       // --- Use the cloned value ---
+                                        let guard = latest_now_playing_arc.read().await;
+                                        guard.clone()
+                                    };
                                     if let Some(prev) = prev_np_opt.as_ref() {
                                         // Use prev_np_opt
                                         let state = PlaybackState {
@@ -1873,6 +1794,10 @@ async fn process_event_chunk(
                     }
                     _ => {
                         let event_with_payload = format!("{} - payload: {}", event_type, payload);
+                        warn!(
+                            "Unknown event type '{}' with payload: {}",
+                            event_type, payload
+                        );
                         let _ = sender.send(LoungeEvent::Unknown(event_with_payload));
                     }
                 }
