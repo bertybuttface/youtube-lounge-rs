@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Logging level set to: {}", log_level);
 
     // Create a client - either with stored auth or by pairing
-    let mut client = if pairing_code.is_some() {
+    let client = if pairing_code.is_some() {
         info!(
             "Pairing with new screen using code: {}",
             pairing_code.as_ref().unwrap()

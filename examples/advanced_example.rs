@@ -127,7 +127,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut connected_clients = Vec::new();
 
     // Process each client
-    for mut client in clients {
+    for client in clients {
         // Store the screen_id for use in logs
         let screen_id = client.screen_id().to_string();
 

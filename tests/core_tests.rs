@@ -219,7 +219,7 @@ fn test_lounge_error() {
     assert!(error_message.contains("Token expired"));
 
     // Test SessionExpired error
-    let err = LoungeError::SessionExpired;
+    let err = LoungeError::SessionLost;
     let error_message = format!("{}", err);
     assert!(error_message.contains("Session expired"));
 
