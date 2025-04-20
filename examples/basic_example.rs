@@ -247,7 +247,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     info!(
                         "[{}] Ad state changed - Content video: {}, Skippable: {}",
                         screen_id_clone,
-                        state.content_video_id,
+                        format!("{:?}", state.content_video_id),
                         state.is_skippable()
                     );
                 }
