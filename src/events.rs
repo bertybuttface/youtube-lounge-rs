@@ -22,6 +22,7 @@ pub enum LoungeEvent {
     LoungeStatus(Vec<models::Device>, Option<String>),
     ScreenDisconnected,
     SessionEstablished,
+    AdPlaying(models::AdPlaying),
     AdStateChange(models::AdState),
     SubtitlesTrackChanged(models::SubtitlesTrackChanged),
     AudioTrackChanged(models::AudioTrackChanged),
@@ -371,6 +372,13 @@ pub(crate) async fn process_event_chunk(
                     }
                     "loungeScreenDisconnected" => {
                         send_event(sender, &LoungeEvent::ScreenDisconnected);
+                    }
+                    "adPlaying" => {
+                        if let Ok(state) =
+                            deserialize_with_logging::<models::AdPlaying>(event_type, payload)
+                        {
+                            send_event(sender, &LoungeEvent::AdPlaying(state));
+                        }
                     }
                     "onAdStateChange" => {
                         if let Ok(state) =

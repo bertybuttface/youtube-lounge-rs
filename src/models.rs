@@ -127,6 +127,34 @@ pub struct AdState {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct AdPlaying {
+    #[serde(rename = "adNextParams")]
+    pub ad_next_params: String,
+    #[serde(rename = "adState")]
+    pub ad_state: String,
+    #[serde(rename = "adSystem")]
+    pub ad_system: String,
+    #[serde(rename = "adTitle")]
+    pub ad_title: String,
+    #[serde(rename = "adVideoId")]
+    pub ad_video_id: String,
+    #[serde(rename = "clickThroughUrl")]
+    pub click_through_url: String,
+    #[serde(rename = "contentVideoId")]
+    pub content_video_id: String,
+    #[serde(rename = "currentTime")]
+    pub current_time: String,
+    #[serde(default)]
+    pub duration: String,
+    #[serde(rename = "isBumper")]
+    pub is_bumper: String,
+    #[serde(rename = "isSkippable")]
+    pub is_skippable: String,
+    #[serde(rename = "isSkipEnabled")]
+    pub is_skip_enabled: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct SubtitlesTrackChanged {
     #[serde(rename = "videoId")]
     pub video_id: String,

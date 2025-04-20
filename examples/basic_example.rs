@@ -243,6 +243,16 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         screen_id_clone
                     );
                 }
+                LoungeEvent::AdPlaying(state) => {
+                    info!(
+                        "[{}] Ad playing - State: {}, Skippable {}, SkipEnabled: {}, Duration: {}",
+                        screen_id_clone,
+                        state.ad_state,
+                        state.is_skippable,
+                        state.is_skip_enabled,
+                        state.duration
+                    );
+                }
                 LoungeEvent::AdStateChange(state) => {
                     info!(
                         "[{}] Ad state changed - Content video: {}, Skippable: {}",
