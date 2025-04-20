@@ -4,10 +4,13 @@ use crate::error::LoungeError;
 use crate::models;
 use crate::state::InnerState;
 
+use std::fmt;
+use std::fmt::Display;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc,
 };
+
 use tokio::sync::{broadcast, RwLock};
 
 #[derive(Debug, Clone)]
@@ -30,6 +33,12 @@ pub enum LoungeEvent {
     PlaylistModified(models::PlaylistModified),
     AutoplayUpNext(models::AutoplayUpNext),
     Unknown(String),
+}
+
+impl Display for LoungeEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 
 /// Represents a complete playback session with data combined from
@@ -224,7 +233,7 @@ pub(crate) async fn process_event_chunk(
                         if let Ok(state) =
                             deserialize_with_logging::<models::PlaybackState>(event_type, payload)
                         {
-                            let _ = sender.send(LoungeEvent::StateChange(state.clone()));
+                            send_event(sender, &LoungeEvent::StateChange(state.clone()));
                             let latest_np = {
                                 let guard = latest_now_playing_arc.read().await;
                                 guard.clone()
@@ -233,8 +242,10 @@ pub(crate) async fn process_event_chunk(
                                 if let (Some(state_cpn), Some(np_cpn)) = (&state.cpn, &np.cpn) {
                                     if state_cpn == np_cpn {
                                         if let Ok(session) = PlaybackSession::new(np, &state) {
-                                            let _ =
-                                                sender.send(LoungeEvent::PlaybackSession(session));
+                                            send_event(
+                                                sender,
+                                                &LoungeEvent::PlaybackSession(session),
+                                            );
                                         }
                                     }
                                 }
@@ -256,7 +267,7 @@ pub(crate) async fn process_event_chunk(
                             );
 
                             // Always send the raw event
-                            let _ = sender.send(LoungeEvent::NowPlaying(now_playing.clone()));
+                            send_event(sender, &LoungeEvent::NowPlaying(now_playing.clone()));
                             if now_playing.cpn.is_some() {
                                 let mut guard = latest_now_playing_arc.write().await;
                                 *guard = Some(now_playing.clone());
@@ -280,8 +291,10 @@ pub(crate) async fn process_event_chunk(
                                         };
 
                                         if let Ok(session) = PlaybackSession::new(prev, &state) {
-                                            let _ =
-                                                sender.send(LoungeEvent::PlaybackSession(session));
+                                            send_event(
+                                                sender,
+                                                &LoungeEvent::PlaybackSession(session),
+                                            );
                                         }
                                     }
                                 }
@@ -301,7 +314,7 @@ pub(crate) async fn process_event_chunk(
                                     if let Ok(session) =
                                         PlaybackSession::new(&now_playing, &state_from_np)
                                     {
-                                        let _ = sender.send(LoungeEvent::PlaybackSession(session));
+                                        send_event(sender, &LoungeEvent::PlaybackSession(session));
                                     }
                                 }
 
@@ -342,10 +355,13 @@ pub(crate) async fn process_event_chunk(
                                         })
                                         .collect();
 
-                                    let _ = sender.send(LoungeEvent::LoungeStatus(
-                                        devices_with_info,
-                                        status.queue_id,
-                                    ));
+                                    send_event(
+                                        sender,
+                                        &LoungeEvent::LoungeStatus(
+                                            devices_with_info,
+                                            status.queue_id,
+                                        ),
+                                    );
                                 }
                                 Err(e) => {
                                     error!(error = %e, "Failed to parse devices from loungeStatus");
@@ -355,69 +371,69 @@ pub(crate) async fn process_event_chunk(
                         }
                     }
                     "loungeScreenDisconnected" => {
-                        let _ = sender.send(LoungeEvent::ScreenDisconnected);
+                        send_event(sender, &LoungeEvent::ScreenDisconnected);
                     }
                     "onAdStateChange" => {
                         if let Ok(state) =
                             deserialize_with_logging::<models::AdState>(event_type, payload)
                         {
-                            let _ = sender.send(LoungeEvent::AdStateChange(state));
+                            send_event(sender, &LoungeEvent::AdStateChange(state));
                         }
                     }
                     "onSubtitlesTrackChanged" => {
                         if let Ok(state) = deserialize_with_logging::<models::SubtitlesTrackChanged>(
                             event_type, payload,
                         ) {
-                            let _ = sender.send(LoungeEvent::SubtitlesTrackChanged(state));
+                            send_event(sender, &LoungeEvent::SubtitlesTrackChanged(state));
                         }
                     }
                     "onAudioTrackChanged" => {
                         if let Ok(state) = deserialize_with_logging::<models::AudioTrackChanged>(
                             event_type, payload,
                         ) {
-                            let _ = sender.send(LoungeEvent::AudioTrackChanged(state));
+                            send_event(sender, &LoungeEvent::AudioTrackChanged(state));
                         }
                     }
                     "onAutoplayModeChanged" => {
                         if let Ok(state) = deserialize_with_logging::<models::AutoplayModeChanged>(
                             event_type, payload,
                         ) {
-                            let _ = sender.send(LoungeEvent::AutoplayModeChanged(state));
+                            send_event(sender, &LoungeEvent::AutoplayModeChanged(state));
                         }
                     }
                     "onHasPreviousNextChanged" => {
                         if let Ok(state) = deserialize_with_logging::<models::HasPreviousNextChanged>(
                             event_type, payload,
                         ) {
-                            let _ = sender.send(LoungeEvent::HasPreviousNextChanged(state));
+                            send_event(sender, &LoungeEvent::HasPreviousNextChanged(state));
                         }
                     }
                     "onVideoQualityChanged" => {
                         if let Ok(state) = deserialize_with_logging::<models::VideoQualityChanged>(
                             event_type, payload,
                         ) {
-                            let _ = sender.send(LoungeEvent::VideoQualityChanged(state));
+                            send_event(sender, &LoungeEvent::VideoQualityChanged(state));
                         }
                     }
                     "onVolumeChanged" => {
                         if let Ok(state) =
                             deserialize_with_logging::<models::VolumeChanged>(event_type, payload)
                         {
-                            let _ = sender.send(LoungeEvent::VolumeChanged(state));
+                            send_event(sender, &LoungeEvent::VolumeChanged(state));
                         }
                     }
                     "playlistModified" => {
                         if let Ok(state) = deserialize_with_logging::<models::PlaylistModified>(
                             event_type, payload,
                         ) {
-                            let _ = sender.send(LoungeEvent::PlaylistModified(state));
+                            send_event(sender, &LoungeEvent::PlaylistModified(state));
                         }
                     }
                     "autoplayUpNext" => {
                         if let Ok(state) =
                             deserialize_with_logging::<models::AutoplayUpNext>(event_type, payload)
                         {
-                            let _ = sender.send(LoungeEvent::AutoplayUpNext(state));
+                            send_event(sender, &LoungeEvent::AutoplayUpNext(state));
                         }
                     }
                     _ => {
@@ -426,10 +442,20 @@ pub(crate) async fn process_event_chunk(
                             "Unknown event type '{}' with payload: {}",
                             event_type, payload
                         );
-                        let _ = sender.send(LoungeEvent::Unknown(event_with_payload));
+                        send_event(sender, &LoungeEvent::Unknown(event_with_payload));
                     }
                 }
             }
+        }
+    }
+}
+
+/// Send a lounge event, logging how many subscribers got it or if it was dropped.
+pub(crate) fn send_event(sender: &broadcast::Sender<LoungeEvent>, event: &LoungeEvent) {
+    match sender.send(event.clone()) {
+        Ok(n_subs) => debug!("event {:?} sent to {} subs", event, n_subs),
+        Err(broadcast::error::SendError(dropped)) => {
+            warn!("dropped event {:?} because no subscribers", dropped);
         }
     }
 }

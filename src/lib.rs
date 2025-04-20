@@ -5,6 +5,7 @@ pub use commands::PlaybackCommand;
 mod error;
 pub use error::LoungeError;
 mod events;
+use events::send_event;
 pub use events::{LoungeEvent, PlaybackSession, PlaybackStatus};
 mod models;
 pub use models::{
@@ -13,6 +14,8 @@ pub use models::{
     ScreenResponse, ScreensResponse, SubtitlesTrackChanged, VideoData, VideoQualityChanged,
     VolumeChanged,
 };
+mod settings;
+pub use settings::SETTINGS;
 mod state;
 use state::{ConnectionState, ConnectionStatus, InnerState, SessionState};
 mod utils;
@@ -30,13 +33,6 @@ use tokio::time::{sleep, timeout, Duration};
 use tokio_util::codec::Decoder;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid; // Needed for jitter
-
-const BUFFER_CAPACITY: usize = 16 * 1024; // 16KB initial buffer capacity
-const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(32); // Wait 32s for next chunk
-const MIN_BACKOFF: Duration = Duration::from_millis(500);
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10); // Timeout for establishing HTTP connection
-const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(300); // Overall timeout for the long poll request
 
 // Type alias for the optional callback function pointer for clarity
 pub type TokenCallback = Option<Box<dyn Fn(&str, &str) + Send + Sync + 'static>>;
@@ -122,14 +118,14 @@ impl LoungeClient {
                 Client::builder()
                     .pool_idle_timeout(Some(Duration::from_secs(600)))
                     .pool_max_idle_per_host(256)
-                    .timeout(REQUEST_TIMEOUT) // Default request timeout
-                    .connect_timeout(REQUEST_TIMEOUT) // Connection timeout
+                    .timeout(SETTINGS.request_timeout) // Default request timeout
+                    .connect_timeout(SETTINGS.request_timeout) // Connection timeout
                     .build()
                     .unwrap(),
             )
         });
         let device_id = device_id.map_or_else(|| Uuid::new_v4().to_string(), ToString::to_string);
-        let (event_tx, _) = broadcast::channel(100);
+        let (event_tx, _) = broadcast::channel(SETTINGS.event_buffer_capacity);
         let (state_tx, state_rx) = watch::channel(ConnectionState::Disconnected);
 
         // Initialize the inner state for the Mutex
@@ -376,7 +372,7 @@ impl LoungeClient {
 
     /// Establish the initial connection and start the background connection manager.
     pub async fn connect(&self) -> Result<(), LoungeError> {
-        info!("Connecting to screen: {}", self.screen_id);
+        info!("[{}] Connecting to screen", self.screen_id);
 
         // Clear any previous stop signal
         self.stop_signal.store(false, Ordering::SeqCst);
@@ -404,7 +400,8 @@ impl LoungeClient {
                 }
 
                 // Send event indicating success
-                let _ = self.event_sender.send(LoungeEvent::SessionEstablished);
+                send_event(&self.event_sender, &LoungeEvent::SessionEstablished);
+
                 // Set state to Connected *before* starting manager? Or let manager do it? Let manager do it.
                 // let _ = self.connection_state_tx.send(ConnectionState::Connected);
 
@@ -492,7 +489,7 @@ impl LoungeClient {
             // state_tx, shutdown_notify moved in
             info!("Connection manager task started.");
             let _ = ctx.state_tx.send(ConnectionState::Connecting); // Initial state
-            let mut backoff = MIN_BACKOFF;
+            let mut backoff = SETTINGS.min_backoff;
             // Outer loop only breaks on explicit shutdown signal
             loop {
                 // Check if termination requested
@@ -543,7 +540,7 @@ impl LoungeClient {
                          match result {
                              Ok(ConnectionStatus::Success) => {
                                  // Successful poll or bind, reset backoff. State is Connected or Connecting->Connected.
-                                 backoff = MIN_BACKOFF;
+                                 backoff = SETTINGS.min_backoff;
                              },
                              Ok(ConnectionStatus::SessionInvalidated) => {
                                  warn!("Session invalidated (e.g., 400/404/410). Clearing session state.");
@@ -552,7 +549,7 @@ impl LoungeClient {
                                      session_write.sid = None;
                                      session_write.gsessionid = None;
                                  }
-                                 let _ = ctx.event_sender.send(LoungeEvent::ScreenDisconnected);
+                                 send_event(&ctx.event_sender, &LoungeEvent::ScreenDisconnected);
                                  let _ = ctx.state_tx.send(ConnectionState::Connecting); // Will attempt to reconnect
                                  // Apply backoff before next attempt
                                  let delay_duration = calculate_backoff_delay(backoff);
@@ -562,12 +559,12 @@ impl LoungeClient {
                                      _ = sleep(delay_duration) => {},
                                      _ = ctx.shutdown_notify.notified() => { return; } // Return from async block if interrupted
                                  }
-                                 backoff = (backoff * 2).min(MAX_BACKOFF);
+                                 backoff = (backoff * 2).min(SETTINGS.max_backoff);
                              },
                              Ok(ConnectionStatus::TokenExpired) => {
                                  warn!("Token expired (401 detected). Attempting refresh.");
                                  match Self::try_refresh_token(&ctx.screen_id, &ctx.shared_state).await {
-                                     Ok(()) => { info!("Token refreshed successfully."); backoff = MIN_BACKOFF; },
+                                     Ok(()) => { info!("Token refreshed successfully."); backoff = SETTINGS.min_backoff; },
                                      Err(e) => {
                                          error!(error = %e, "Token refresh attempt failed.");
                                          let _ = ctx.state_tx.send(ConnectionState::Failed(format!("Token refresh failed: {}", e)));
@@ -579,7 +576,7 @@ impl LoungeClient {
                                              _ = sleep(delay_duration) => {},
                                              _ = ctx.shutdown_notify.notified() => { return; } // Return from async block if interrupted
                                          }
-                                         backoff = (backoff * 2).min(MAX_BACKOFF);
+                                         backoff = (backoff * 2).min(SETTINGS.max_backoff);
                                      }
                                  }
                              },
@@ -598,7 +595,7 @@ impl LoungeClient {
                                          warn!("Clearing session state due to error: {}", e);
                                          session_write.sid = None;
                                          session_write.gsessionid = None;
-                                         let _ = ctx.event_sender.send(LoungeEvent::ScreenDisconnected);
+                                         send_event(&ctx.event_sender, &LoungeEvent::ScreenDisconnected);
                                      }
                                  }
                                  // Apply backoff before next attempt
@@ -609,7 +606,7 @@ impl LoungeClient {
                                      _ = sleep(delay_duration) => {},
                                      _ = ctx.shutdown_notify.notified() => { return; } // Return from async block if interrupted
                                  }
-                                 backoff = (backoff * 2).min(MAX_BACKOFF);
+                                 backoff = (backoff * 2).min(SETTINGS.max_backoff);
                              },
                          }
                       } => { /* Normal async block completed */ }
@@ -725,7 +722,7 @@ impl LoungeClient {
                         session_write.command_offset.store(0, Ordering::SeqCst);
                         debug!("Stored new SID/GSessionID, reset offset in shared SessionState.");
                     }
-                    let _ = ctx.event_sender.send(LoungeEvent::SessionEstablished);
+                    send_event(&ctx.event_sender, &LoungeEvent::SessionEstablished);
                     // let _ = state_tx.send(ConnectionState::Connected); // Let manager loop set state
                     Ok(ConnectionStatus::Success)
                 } else {
@@ -812,7 +809,7 @@ impl LoungeClient {
             res = ctx.client
                 .get("https://www.youtube.com/api/lounge/bc/bind")
                 .query(&params)
-                .timeout(LONG_POLL_TIMEOUT) // Use long poll timeout
+                .timeout(SETTINGS.long_poll_timeout) // Use long poll timeout
                 .send() => res, // This assigns the Result<Response, reqwest::Error>
         };
 
@@ -895,7 +892,7 @@ impl LoungeClient {
         // (The rest of the function with the select! around stream.next() remains the same)
         let mut stream = response.bytes_stream();
         let mut codec = LoungeCodec::new();
-        let mut buffer = BytesMut::with_capacity(BUFFER_CAPACITY);
+        let mut buffer = BytesMut::with_capacity(SETTINGS.streaming_buffer_capacity);
         let mut _received_data = false; // Keep track if we got any data in this poll cycle
 
         loop {
@@ -910,7 +907,7 @@ impl LoungeClient {
                 }
 
                 // Wait for the next chunk OR the inactivity timeout
-                maybe_chunk_result = timeout(INACTIVITY_TIMEOUT, stream.next()) => {
+                maybe_chunk_result = timeout(SETTINGS.inactivity_timeout, stream.next()) => {
                         match maybe_chunk_result {
                         // --- Case 1: Data received within timeout ---
                         Ok(Some(Ok(chunk))) => {
@@ -989,7 +986,7 @@ impl LoungeClient {
                         Err(_) => {
                             debug!(
                                 "Inactivity detected (no data for >{}s), closing poll cycle. Re-polling.",
-                                INACTIVITY_TIMEOUT.as_secs()
+                                SETTINGS.inactivity_timeout.as_secs()
                             );
                                 // Treat timeout like a graceful close, immediately try polling again
                                 return Ok(ConnectionStatus::Success);
@@ -1357,7 +1354,7 @@ impl LoungeClient {
         }
 
         // 5. Send disconnect event and set final state
-        let _ = self.event_sender.send(LoungeEvent::ScreenDisconnected);
+        send_event(&self.event_sender, &LoungeEvent::ScreenDisconnected);
         let _ = self
             .connection_state_tx
             .send_replace(ConnectionState::Disconnected);
@@ -1483,11 +1480,16 @@ impl std::fmt::Debug for LoungeClient {
 // Ensure the client cleans up the background task on drop
 impl Drop for LoungeClient {
     fn drop(&mut self) {
-        info!("Dropping LoungeClient, signaling connection manager to stop.");
-        // Signal the background task to stop, don't await here as drop shouldn't block
-        self.stop_signal.store(true, Ordering::SeqCst);
-        // We don't explicitly wait for the task to finish here,
-        // but the signal should cause it to break its loop.
+        // only signal once
+        if !self.stop_signal.load(Ordering::Relaxed) {
+            // Check if already signaled
+            info!(
+                "[{}] Dropping client, signalling connection manager to stop",
+                self.screen_id
+            );
+            self.stop_signal.store(true, Ordering::SeqCst);
+            self.shutdown_notify.notify_one(); // Use notify_one if only one task needs waking
+        }
     }
 }
 
