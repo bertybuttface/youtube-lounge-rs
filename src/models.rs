@@ -181,6 +181,14 @@ pub struct PlaylistModified {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistModeChanged {
+    #[serde(rename = "loopEnabled", default)]
+    pub loop_enabled: String,
+    #[serde(rename = "shuffleEnabled", default)]
+    pub shuffle_enabled: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AutoplayUpNext {
     #[serde(rename = "videoId")]
     pub video_id: String,
@@ -228,6 +236,17 @@ impl PlaylistModified {
         self.current_index
             .as_ref()
             .map(|idx| youtube_parse::parse_int(idx))
+    }
+}
+
+// Helper methods for PlaylistModeChanged
+impl PlaylistModeChanged {
+    pub fn is_loop_enabled(&self) -> bool {
+        youtube_parse::parse_bool(&self.loop_enabled)
+    }
+
+    pub fn is_shuffle_enabled(&self) -> bool {
+        youtube_parse::parse_bool(&self.shuffle_enabled)
     }
 }
 

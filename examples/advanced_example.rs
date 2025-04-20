@@ -331,6 +331,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             debug!("[{}] Current Index: {}", screen_id_clone, idx);
                         }
                     }
+                    LoungeEvent::PlaylistModeChanged(state) => {
+                        info!(
+                            "[{}] Playlist mode changed - LoopEnabled: {}, ShuffleEnabled: {}",
+                            screen_id_clone, state.loop_enabled, state.shuffle_enabled
+                        );
+                    }
                     LoungeEvent::AutoplayUpNext(state) => {
                         info!("[{}] Autoplay up next: {}", screen_id_clone, state.video_id);
                     }

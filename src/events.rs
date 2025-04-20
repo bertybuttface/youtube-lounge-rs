@@ -30,6 +30,7 @@ pub enum LoungeEvent {
     VideoQualityChanged(models::VideoQualityChanged),
     VolumeChanged(models::VolumeChanged),
     PlaylistModified(models::PlaylistModified),
+    PlaylistModeChanged(models::PlaylistModeChanged),
     AutoplayUpNext(models::AutoplayUpNext),
     Unknown(String),
 }
@@ -425,6 +426,13 @@ pub(crate) async fn process_event_chunk(
                             event_type, payload,
                         ) {
                             send_event(sender, &LoungeEvent::PlaylistModified(state));
+                        }
+                    }
+                    "onPlaylistModeChanged" => {
+                        if let Ok(state) = deserialize_with_logging::<models::PlaylistModeChanged>(
+                            event_type, payload,
+                        ) {
+                            send_event(sender, &LoungeEvent::PlaylistModeChanged(state));
                         }
                     }
                     "autoplayUpNext" => {
