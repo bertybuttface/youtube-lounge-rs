@@ -221,16 +221,19 @@ fn test_lounge_error() {
     // Test SessionExpired error
     let err = LoungeError::SessionLost;
     let error_message = format!("{}", err);
-    assert!(error_message.contains("Session expired"));
+    println!("Error message: {}", error_message);
+    assert!(error_message.contains("Session not established or lost (Missing SID/GSID)"));
 
     // Test ConnectionClosed error
     let err = LoungeError::ConnectionClosed;
     let error_message = format!("{}", err);
-    assert!(error_message.contains("Connection closed"));
+    println!("Error message: {}", error_message);
+    assert!(error_message.contains("Connection explicitly closed or terminated"));
 
     // Test InvalidResponse error
     let err = LoungeError::InvalidResponse("Test error".to_string());
     let error_message = format!("{}", err);
+    println!("Error message: {}", error_message);
     assert!(error_message.contains("Test error"));
 }
 
