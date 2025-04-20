@@ -2,7 +2,6 @@ use tracing::{debug, error, trace, warn};
 
 use crate::error::LoungeError;
 use crate::models;
-use crate::state::InnerState;
 
 use std::fmt;
 use std::fmt::Display;
@@ -162,7 +161,6 @@ pub(crate) async fn process_event_chunk(
     chunk: &str,
     sender: &broadcast::Sender<LoungeEvent>,
     latest_now_playing_arc: &Arc<RwLock<Option<models::NowPlaying>>>,
-    _shared_state_arc: &Arc<RwLock<InnerState>>,
     aid_atomic: &Arc<AtomicU32>,
 ) {
     // Helper function for deserializing with error logging

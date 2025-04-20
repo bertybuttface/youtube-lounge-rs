@@ -78,7 +78,7 @@ struct ConnectionManagerContext {
     latest_now_playing: Arc<RwLock<Option<NowPlaying>>>,
     aid_atomic: Arc<AtomicU32>,
     shutdown_notify: Arc<Notify>,
-    state_tx: Arc<watch::Sender<ConnectionState>>, // Also pass state sender for potential internal updates
+    state_tx: Arc<watch::Sender<ConnectionState>>,
 }
 
 pub struct LoungeClient {
@@ -926,7 +926,6 @@ impl LoungeClient {
                                             &message, // Use ctx fields
                                             &ctx.event_sender,
                                             &ctx.latest_now_playing,
-                                            &ctx.shared_state,
                                             &ctx.aid_atomic,
                                         )
                                         .await;
