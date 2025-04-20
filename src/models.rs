@@ -116,7 +116,7 @@ impl NowPlaying {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AdState {
-    #[serde(rename = "AdState")]
+    #[serde(rename = "adState")]
     pub ad_state: String,
     #[serde(rename = "contentVideoId", default)]
     pub content_video_id: Option<String>,
