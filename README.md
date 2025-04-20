@@ -40,7 +40,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-youtube-lounge-rs = "8.0.1"
+youtube-lounge-rs = "8.0.2"
 ```
 
 ### Dependencies
