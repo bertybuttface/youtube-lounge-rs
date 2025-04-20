@@ -118,6 +118,8 @@ impl NowPlaying {
 pub struct AdState {
     #[serde(rename = "contentVideoId")]
     pub content_video_id: String,
+    #[serde(rename = "currentTime")]
+    pub current_time: String,
     #[serde(rename = "isSkipEnabled")]
     pub is_skip_enabled: bool,
 }

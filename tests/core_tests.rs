@@ -106,6 +106,7 @@ fn test_events() {
     // Test AdStateChange event
     let ad_state = AdState {
         content_video_id: "adVideoId123".to_string(),
+        current_time: "10.0".to_string(),
         is_skip_enabled: true,
     };
     let event = LoungeEvent::AdStateChange(ad_state);

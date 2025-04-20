@@ -15,7 +15,14 @@ pub mod youtube_parse {
     }
 
     pub fn parse_bool(s: &str) -> bool {
-        s == "true"
+        if s == "true" {
+            true
+        } else {
+            if s != "false" {
+                tracing::warn!("Unexpected boolean string value: {}", s);
+            }
+            false
+        }
     }
 
     pub fn parse_list(s: &str) -> Vec<String> {
