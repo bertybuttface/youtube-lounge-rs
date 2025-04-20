@@ -19,6 +19,14 @@ pub enum ConnectionState {
     Stopping,
 }
 
+// Represents the outcome of a connection manager cycle (poll or bind attempt)
+#[derive(Debug)]
+pub enum ConnectionStatus {
+    Success,            // Operation succeeded (data processed, stream ended, bind successful)
+    SessionInvalidated, // Server indicated session is dead (400, 404, 410)
+    TokenExpired,       // Server indicated token is expired (401)
+}
+
 // Shared state containing token and refresh callback
 pub(crate) struct InnerState {
     pub(crate) lounge_token: String,

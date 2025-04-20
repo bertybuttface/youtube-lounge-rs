@@ -14,7 +14,7 @@ pub use models::{
     VolumeChanged,
 };
 mod state;
-use state::{ConnectionState, InnerState, SessionState};
+use state::{ConnectionState, ConnectionStatus, InnerState, SessionState};
 mod utils;
 pub use utils::youtube_parse;
 
@@ -1466,14 +1466,6 @@ impl LoungeClient {
         self.send_command_with_refresh(PlaybackCommand::set_playlist_with_index(list_id, index))
             .await
     }
-}
-
-// Represents the outcome of a connection manager cycle (poll or bind attempt)
-#[derive(Debug)]
-enum ConnectionStatus {
-    Success,            // Operation succeeded (data processed, stream ended, bind successful)
-    SessionInvalidated, // Server indicated session is dead (400, 404, 410)
-    TokenExpired,       // Server indicated token is expired (401)
 }
 
 // Safety traits
