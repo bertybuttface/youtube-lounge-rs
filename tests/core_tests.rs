@@ -107,13 +107,13 @@ fn test_events() {
     let ad_state = AdState {
         content_video_id: "adVideoId123".to_string(),
         current_time: "10.0".to_string(),
-        is_skip_enabled: true,
+        is_skip_enabled: "true".to_string(),
     };
     let event = LoungeEvent::AdStateChange(ad_state);
     match event {
         LoungeEvent::AdStateChange(ad) => {
             assert_eq!(ad.content_video_id, "adVideoId123");
-            assert!(ad.is_skip_enabled);
+            assert_eq!(ad.is_skip_enabled, "true");
             assert!(ad.is_skippable()); // Test helper method
         }
         _ => panic!("Expected AdStateChange event"),

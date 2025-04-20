@@ -121,7 +121,7 @@ pub struct AdState {
     #[serde(rename = "currentTime")]
     pub current_time: String,
     #[serde(rename = "isSkipEnabled")]
-    pub is_skip_enabled: bool,
+    pub is_skip_enabled: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -234,7 +234,7 @@ impl PlaylistModified {
 // Helper methods for AdState
 impl AdState {
     pub fn is_skippable(&self) -> bool {
-        self.is_skip_enabled
+        youtube_parse::parse_bool(&self.is_skip_enabled)
     }
 
     pub fn get_content_video_id(&self) -> &str {
