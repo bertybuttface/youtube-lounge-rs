@@ -11,4 +11,3 @@ This repository documents the reverse-engineered details about how YouTube's cas
 5. [Remote API Events](API-Remote-Events.md) - Event sequence and ID relationships  
 6. [TV API Client](API-TV-Client.md) - How the TV client interacts with the API  
 7. [TV API](API-TV.md) - TV API structure and session handling  
-8. [Postman Collection](Postman-Collection.md) - Ready-to-use Postman API collection

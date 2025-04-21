@@ -42,7 +42,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Publish to crates.io
-        run: cargo publish --token ${CRATES_TOKEN}
+        run: "cargo publish --token ${CRATES_TOKEN}"
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 
