@@ -467,9 +467,9 @@ pub(crate) async fn process_event_chunk(
 /// Send a lounge event, logging how many subscribers got it or if it was dropped.
 pub(crate) fn send_event(sender: &broadcast::Sender<LoungeEvent>, event: &LoungeEvent) {
     match sender.send(event.clone()) {
-        Ok(n_subs) => debug!("event {:?} sent to {} subs", event, n_subs),
+        Ok(n_subs) => trace!("Event {:?} sent to {} subs", event, n_subs),
         Err(broadcast::error::SendError(dropped)) => {
-            warn!("dropped event {:?} because no subscribers", dropped);
+            warn!("Dropped event {:?} because no subscribers", dropped);
         }
     }
 }
