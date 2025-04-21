@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,28 +19,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --all-features
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Clippy (lib code)
-        run: cargo clippy --all-features -- -D warnings -A clippy::await_holding_lock
-      - name: Clippy (test code)
-        run: cargo clippy --tests --all-features -- -D warnings -A clippy::await_holding_lock
-      - name: Markdown lint
-        uses: DavidAnson/markdownlint-cli2-action@v19
-        continue-on-error: false
-        with:
-          config: '.markdownlint.json'
-          globs: '**/*.md'
 
   coverage:
     name: Code coverage

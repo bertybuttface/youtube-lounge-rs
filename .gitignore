@@ -25,3 +25,4 @@ youtube_auth.json
 
 # Logs
 /logs/
+megalinter-reports/

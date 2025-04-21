@@ -5,6 +5,7 @@ A lightweight Rust client library for the YouTube Lounge API, which allows contr
 [![Crates.io](https://img.shields.io/crates/v/youtube-lounge-rs.svg)](https://crates.io/crates/youtube-lounge-rs)
 [![Docs.rs](https://docs.rs/youtube-lounge-rs/badge.svg)](https://docs.rs/youtube-lounge-rs)
 [![CI](https://github.com/bertybuttface/youtube-lounge-rs/workflows/CI/badge.svg)](https://github.com/bertybuttface/youtube-lounge-rs/actions/workflows/ci.yml)
+[![Mega-Linter](https://github.com/bertybuttface/youtube-lounge-rs/workflows/Mega-Linter/badge.svg?branch=main)](https://github.com/marketplace/actions/mega-linter)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
 
 ## Table of Contents
