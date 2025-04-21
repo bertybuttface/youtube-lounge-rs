@@ -27,12 +27,12 @@ Sessions are linked to **device-based authentication** rather than user-based lo
 
 ### 2. **Differences in API Communication**  
 
-| Feature              | Web & Mobile API | YouTube TV API |
-|----------------------|-----------------|---------------|
-| Authentication      | OAuth-based      | Session-based |
-| Video Playback     | Standard API calls | Optimized for long sessions |
-| Device Pairing     | Limited support | Lounge API integration |
-| Command Handling  | REST requests  | Long polling |
+| Feature          | Web & Mobile API   | YouTube TV API              |
+|------------------|--------------------|-----------------------------|
+| Authentication   | OAuth-based        | Session-based               |
+| Video Playback   | Standard API calls | Optimized for long sessions |
+| Device Pairing   | Limited support    | Lounge API integration      |
+| Command Handling | REST requests      | Long polling                |
 
 ---
 

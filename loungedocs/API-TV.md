@@ -6,11 +6,11 @@ The **YouTube TV API** shares similarities with YouTube’s web API but includes
 
 ## 1. **TV API vs. Web API**  
 
-| Feature          | Web API        | TV API |
-|-----------------|---------------|--------|
-| Authentication  | OAuth tokens   | Session-based |
-| Device Linking | Limited        | Persistent Lounge API integration |
-| API Calls       | REST           | Long polling |
+| Feature        | Web API      | TV API                            |
+|----------------|--------------|-----------------------------------|
+| Authentication | OAuth tokens | Session-based                     |
+| Device Linking | Limited      | Persistent Lounge API integration |
+| API Calls      | REST         | Long polling                      |
 
 ---
 

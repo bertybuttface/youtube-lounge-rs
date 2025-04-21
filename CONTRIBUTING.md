@@ -72,7 +72,7 @@ We strongly encourage new contributors to run the basic example to understand ho
 
 Running the example requires a YouTube-compatible device (Smart TV, Chromecast, etc.) with a pairing code displayed on screen. The example code is well-commented and shows the typical usage flow.
 
-Alternatively you can use a web browser pointed at https://www.youtube.com/tv#/ but you must change the user agent to “User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:87.0) Gecko/20100101 Cobalt/87.0” it will then work just like a YouTube-compatible device.
+Alternatively you can use a web browser pointed at <https://www.youtube.com/tv#/> but you must change the user agent to “User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:87.0) Gecko/20100101 Cobalt/87.0” it will then work just like a YouTube-compatible device.
 
 ### Code Style and Linting
 
@@ -112,7 +112,7 @@ All these checks are automatically run by the pre-commit hook, which will provid
 
 - Write unit tests for new functionality
 - Ensure integration tests pass
-- For features involving YouTube devices, explain how you tested with real devices or https://www.youtube.com/tv#/
+- For features involving YouTube devices, explain how you tested with real devices or <https://www.youtube.com/tv#/>
 
 ## Release Process
 
