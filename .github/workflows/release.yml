@@ -1,71 +1,20 @@
+---
 name: Release
+permissions: read-all
 
+# This workflow is triggered manually
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-
-env:
-  CARGO_TERM_COLOR: always
+  workflow_dispatch:
 
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Clippy (lib code)
-        run: cargo clippy --all-features -- -D warnings -A clippy::await_holding_lock
-      - name: Clippy (test code)
-        run: cargo clippy --tests --all-features -- -D warnings -A clippy::await_holding_lock
-      - name: Markdown lint
-        uses: DavidAnson/markdownlint-cli2-action@v19
-        continue-on-error: false
-        with:
-          config: ".github/linters/.markdownlint.json"
-          globs: "**/*.md"
-      - name: Run tests
-        run: cargo test --all-features
-
-  publish:
-    name: Publish
-    needs: check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Publish to crates.io
-        run: "cargo publish --token ${CRATES_TOKEN}"
-        env:
-          CRATES_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-
-  github-release:
-    name: GitHub Release
-    needs: publish
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Generate Changelog
-        id: changelog
-        uses: mikepenz/release-changelog-builder-action@v5
-        with:
-          configuration: ".github/changelog-config.json"
-          mode: "COMMIT"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Create Release
-        uses: softprops/action-gh-release@v2.2.0
-        with:
-          name: Release ${{ github.ref_name }}
-          body: ${{ steps.changelog.outputs.changelog }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  release:
+    uses: semantic-release-action/rust/.github/workflows/release-library.yml@v5
+    with:
+      toolchain: stable
+      # Optional: GitHub App authentication for pushing to protected branches
+      # github_app_id: ${{ vars.SEMANTIC_RELEASE_GITHUB_APP_ID }}
+    secrets:
+      cargo-registry-token: ${{ secrets.CRATES_IO_TOKEN }}
+      # Optional, but must be specified with github_app_id input is set
+      # github_app_private_key: ${{ secrets.SEMANTIC_RELEASE_GITHUB_PRIVATE_KEY }}
+    permissions: write-all

@@ -4,7 +4,7 @@
 
 Common format:
 
-```
+```http
 POST https://www.youtube.com/api/lounge/bc/bind?RID=rid&VER=8&CVER=1&gsessionid=session&SID=sid&auth_failure_option=send_error
 content-type:application/x-www-form-urlencoded
 reqX__sc=commandName
@@ -14,7 +14,7 @@ Each command uses `reqX__sc` parameter (usually `req0__sc`) to specify which com
 
 - Video cast (`setPlaylist`)
 
-```
+```plaintext
 req0__sc=setPlaylist
 &req0_prioritizeMobileSenderPlaybackStateOnConnection=true
 &req0_currentIndex=-1
@@ -29,7 +29,7 @@ req0__sc=setPlaylist
 
 - Video Queue (`addVideo`)
 
-```
+```plaintext
 req0__sc=addVideo
 &req0_videoId=qZHawOLfEG0
 &req0_videoSources=XX
@@ -38,7 +38,7 @@ req0__sc=addVideo
 
 - Seek (`seekTo`)
 
-```
+```plaintext
 req0__sc=seekTo
 &count=1
 &req0_newTime=123 // in seconds
@@ -46,7 +46,7 @@ req0__sc=seekTo
 
 - Volume (`setVolume`)
 
-```
+```plaintext
 req0__sc=setVolume
 &req0_volume=50 // in percentage; 0-100
 &count=1
@@ -54,28 +54,28 @@ req0__sc=setVolume
 
 - Video Pause (`pause`)
 
-```
+```plaintext
 req0__sc=pause
 &count=1
 ```
 
 - Video Play (`play`)
 
-```
+```plaintext
 &req0__sc=play
 &count=1
 ```
 
 - Skip ad (`skipAd`)
 
-```
+```plaintext
 req0__sc=skipAd
 &count=1
 ```
 
 - Set autoplay (`setAutoplayMode`)
 
-```
+```plaintext
 req0__sc=setAutoplayMode
 &autoplayMode=ENABLED / ENABLED or DISABLED
 &count=1

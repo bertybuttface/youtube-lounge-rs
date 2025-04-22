@@ -1,0 +1,34 @@
+{
+  "branches": [
+    "master",
+    {"name": "next", "prerelease": true},
+    {"name": "next-major", "prerelease": "next-major"},
+    {"name": "beta", "prerelease": "beta"},
+    {"name": "alpha", "prerelease": "alpha"},
+    {"name": "[0-9]+.[0-9]+.x", "range": "${name}", "prerelease": false},
+    {"name": "[0-9]+.x", "range": "${name}", "prerelease": false}
+  ],
+  "plugins": [
+    [
+        "@semantic-release/commit-analyzer",
+        {
+          "preset": "conventionalcommits"
+        }
+    ],
+    [
+        "@semantic-release/release-notes-generator",
+        {
+          "preset": "conventionalcommits"
+        }
+    ],
+    "@semantic-release/changelog",
+    "@semantic-release-cargo/semantic-release-cargo",
+    "@semantic-release/github",
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["CHANGELOG.md", "Cargo.toml"]
+      }
+    ]
+  ]
+}

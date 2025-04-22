@@ -1,3 +1,5 @@
+# Discovery
+
 The first part of the cast is how the app discovers other devices. Now, this isn't scoped in how the lounge api works, but it's still the first step to use said api.
 
 ## Protocols up the a**
@@ -9,7 +11,7 @@ The one I ended up fiddling with the most was the DIAL protocol - basically the 
 
 - send a UDP broadcast in the network "M-SEARCH":
 
-```
+```http
 M-SEARCH * HTTP/1.1
 HOST: 239.255.255.250:1900
 MAN: "ssdp:discover"
@@ -19,7 +21,7 @@ ST: urn:dial-multiscreen-org:service:dial:1 USER-AGENT: OS/version product/versi
 
 - second screen devices in the network will respond something like:
 
-```
+```http
 HTTP/1.1 200 OK
 LOCATION: http://192.168.1.1:52235/dd.xml
 CACHE-CONTROL: max-age=1800
@@ -31,7 +33,7 @@ ST: urn:dial-multiscreen-org:service:dial:1 WAKEUP: MAC=10:dd:b1:c9:00:e4;Timeou
 
 - The important part is the 192.168.x.x:yyyy/dd.xml. By accessing this endpoint, the device will identify itself:
 
-```
+```xml
 <root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:r="urn:restful-tv-org:schemas:upnp-dd">
   <specVersion>
     <major>1</major>
@@ -48,9 +50,9 @@ ST: urn:dial-multiscreen-org:service:dial:1 WAKEUP: MAC=10:dd:b1:c9:00:e4;Timeou
 ```
 
 - [Intermediate steps not fully documented] There appears to be additional steps between getting the device information and querying for app details. This part of the protocol needs further investigation.
-- Somewhere in the [dial protocol site](http://www.dial-multiscreen.org), the is a spreadsheet that lists all official DIAL supported apps and identifiers that can be used to query second screen devices with <http://192.168.x.v:zzzz/apps/{app-identifier}>:
+- Somewhere in the [dial protocol site](http://www.dial-multiscreen.org), the is a spreadsheet that lists all official DIAL supported apps and identifiers that can be used to query second screen devices with `http://192.168.x.y:zzzz/apps/{app-identifier}`
 
-```
+```xml
 <service xmlns="urn:dial-multiscreen-org:schemas:dial">
   <name>YouTube</name>
   <options allowStop="false"/>

@@ -19,7 +19,7 @@ A clear and concise description of what the bug is.
 A clear and concise description of what you expected to happen.
 
 ## Error Output
-```
+```plaintext
 Paste error messages, panic output, or logs here
 ```
 

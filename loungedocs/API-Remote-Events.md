@@ -28,7 +28,7 @@ This document details the observed event flow and ID relationships in the YouTub
 
 - At this point, the system creates a mapping between list_id and device_id:
 
-```
+```plaintext
 DEBUG: Added mapping: list_id RQuKt0IBC5t_IZAGghtcSFlbJNXrk -> device_id dn93hla9bmetrmrovfbq191sd3
 ```
 
@@ -84,7 +84,7 @@ DEBUG: Added mapping: list_id RQuKt0IBC5t_IZAGghtcSFlbJNXrk -> device_id dn93hla
 
 - The system updates the session with device information:
 
-```
+```plaintext
 DEBUG: Updating session for CPN 0Cxkp2Od9KEyzgdu with device_id dn93hla9bmetrmrovfbq191sd3 from list_id mapping
 ```
 
@@ -120,7 +120,7 @@ When a new `nowPlaying` event arrives with a CPN and listId, the system:
 
 3. **ID Relationships**: The most reliable chain is:
 
-   ```
+   ```plaintext
    listId (queueId) → device_id → session (identified by CPN)
    ```
 

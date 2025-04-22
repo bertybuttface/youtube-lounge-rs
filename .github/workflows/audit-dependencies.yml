@@ -1,4 +1,7 @@
+---
+# This workflow audits the dependencies of a Rust project using cargo-audit.
 name: "Audit Dependencies"
+permissions: read-all
 on:
   push:
     paths:

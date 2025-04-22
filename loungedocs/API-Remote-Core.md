@@ -20,7 +20,7 @@ The first step for using the API is getting a lounge token. There are two method
    - In the YouTube app settings, find the "Link with TV code" option
    - Use the 12-digit code in a request:
 
-   ```
+   ```http
    POST https://www.youtube.com/api/lounge/pairing/get_screen
    content-type: application/x-www-form-urlencoded
    pairing_code=793868867097
@@ -50,7 +50,7 @@ When pairing with a code, save the response locally for reconnection. The device
 
 Lounge tokens expire periodically. For discoverable devices, rediscover and query the screen. For code-paired screens, use:
 
-```
+```http
 POST https://www.youtube.com/api/lounge/pairing/get_lounge_token_batch
 content-type: application/x-www-form-urlencoded
 screen_ids=abc,123
@@ -81,7 +81,7 @@ You can batch request lounge tokens by using multiple screen IDs separated by co
 
 With the lounge token, create a link to the lounge so it recognizes the remote device:
 
-```
+```http
 POST https://www.youtube.com/api/lounge/bc/bind?RID=1&VER=8&CVER=1&auth_failure_option=send_error
 content-type: application/x-www-form-urlencoded
 {
@@ -109,7 +109,7 @@ Note: The parameters `capabilities`, `magnaKey`, `ui`, and `theme` are not fully
 
 To track lounge events (what's playing, connections, pauses, ads, etc.), use long HTTP polling. First, establish a session:
 
-```
+```http
 POST https://www.youtube.com/api/lounge/bc/bind
 content-type: application/x-www-form-urlencoded
 name=devicename&app=app_name&loungeIdToken=loungeToken
@@ -119,7 +119,7 @@ name=devicename&app=app_name&loungeIdToken=loungeToken
 
 Events are returned in chunks:
 
-```
+```plaintext
 number
 [[id, ["event_name", event_argument, not sure what]
 ]
@@ -135,7 +135,7 @@ Where:
 
 The first response contains essential session variables:
 
-```
+```plaintext
 234
 [[0,["c","FEWWEFWEFWEF","",8]]
 ,[1,["S","wefwefwef"]]
@@ -155,7 +155,7 @@ Important variables from this response:
 
 For subsequent event polling:
 
-```
+```http
 GET https://www.youtube.com/api/lounge/bc/bind?SID=sid&gsessionid=gsession&loungeIdToken=loungeToken&CI=1&TYPE=xmlhttp&AID=???
 ```
 
@@ -172,7 +172,7 @@ Key state variables to track:
 
 To control the screen (like playing a video):
 
-```
+```http
 POST https://www.youtube.com/api/lounge/bc/bind?RID=???????????&VER=8&CVER=1&gsessionid=session&SID=sid&auth_failure_option=send_error
 content-type: application/x-www-form-urlencoded
 req0_prioritizeMobileSenderPlaybackStateOnConnection=true
@@ -200,7 +200,7 @@ Note: It's theorized but not confirmed that the `reqX_` format allows batching m
 
 To disconnect from the lounge:
 
-```
+```http
 POST https://www.youtube.com/api/lounge/bc/bind?RID=x&VER=8&CVER=1&gsessionid=session&SID=sid&auth_failure_option=send_error
 content-type: application/x-www-form-urlencoded
 ui=&TYPE=terminate&clientDisconnectReason=MDX_SESSION_DISCONNECT_REASON_DISCONNECTED_BY_USER
