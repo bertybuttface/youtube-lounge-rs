@@ -2,13 +2,30 @@
 name: Release
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
-# This workflow is triggered manually
+# Trigger directly on push to release branches IF Branch Protection Rules / Rulesets
+# are enforcing the prerequisite checks (CI, Lint, Audit).
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - next
+      - next-major
+      - beta
+      - alpha
+      - "[0-9]+.[0-9]+.x"
+      - "[0-9]+.x"
 
 jobs:
   release:
+    # These keys are DIRECT children of the job ID 'release'
+    name: Release # Optional: Job name displayed in UI
+    # runs-on: ubuntu-latest # You CAN include runs-on, but it's often unnecessary for reusable workflows as the runner is defined *within* the reusable workflow. Let's keep it for now.
+    if: github.actor != 'github-actions[bot]' && !startsWith(github.event.head_commit.message, 'chore(release):')
+
+    # 'uses', 'with', 'secrets' are ALSO direct children when calling a reusable workflow
     uses: semantic-release-action/rust/.github/workflows/release-library.yml@v5
     with:
       toolchain: stable
@@ -18,3 +35,4 @@ jobs:
       cargo-registry-token: ${{ secrets.CRATES_IO_TOKEN }}
       # Optional, but must be specified with github_app_id input is set
       # github_app_private_key: ${{ secrets.SEMANTIC_RELEASE_GITHUB_PRIVATE_KEY }}
+      github-token: ${{ secrets.GITHUB_TOKEN }} # Ensure this is passed if the reusable workflow needs it
