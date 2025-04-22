@@ -4,15 +4,17 @@
 name: MegaLinter
 permissions: read-all
 
-# Trigger mega-linter at every push. Action will also be visible from
-# Pull Requests to main
+# Trigger on pull Requests to protected branches
 on:
-  # Comment this line to trigger action only on pull-requests
-  # (not recommended if you don't pay for GH Actions)
-  push:
   pull_request:
     branches:
       - main
+      - next
+      - next-major
+      - beta
+      - alpha
+      - "[0-9]+.[0-9]+.x"
+      - "[0-9]+.x"
 
 # Comment env block if you do not want to apply fixes
 env:

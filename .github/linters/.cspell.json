@@ -73,6 +73,7 @@
     "semgrep",
     "softprops",
     "sqlfluff",
+    "syft",
     "ssap",
     "ssdp",
     "stefanzweifel",

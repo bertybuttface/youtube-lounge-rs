@@ -12,6 +12,10 @@ repos:
           - "megalinter-incremental"
           - --flavor"
           - "rust"
+          - --env
+          - "'CLEAR_REPORT_FOLDER=true'"
+          - --env
+          - "'DISABLE_LINTERS=REPOSITORY_CHECKOV,REPOSITORY_GRYPE,REPOSITORY_SEMGREP,REPOSITORY_SYFT,REPOSITORY_TRUFFLEHOG'"
       - id: megalinter-full # Slower, more thorough
         stages:
           - pre-push
@@ -21,6 +25,10 @@ repos:
           - "megalinter-full"
           - --flavor"
           - "rust"
+          - --env
+          - "'CLEAR_REPORT_FOLDER=true'"
+          - --env
+          - "'DISABLE_LINTERS=REPOSITORY_CHECKOV,REPOSITORY_GRYPE,REPOSITORY_SEMGREP,REPOSITORY_SYFT,REPOSITORY_TRUFFLEHOG'"
 
   # - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
   #   rev: v9.22.0

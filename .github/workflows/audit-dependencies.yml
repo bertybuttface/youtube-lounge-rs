@@ -3,15 +3,16 @@
 name: "Audit Dependencies"
 permissions: read-all
 on:
-  push:
-    paths:
-      # Run if workflow changes
-      - ".github/workflows/audit.yml"
-      # Run on changed dependencies
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
-      # Run if the configuration file changes
-      - "**/audit.toml"
+  pull_request:
+    branches:
+      - main
+      - next
+      - next-major
+      - beta
+      - alpha
+      - "[0-9]+.[0-9]+.x"
+      - "[0-9]+.x"
+
   # Rerun periodically to pick up new advisories
   schedule:
     - cron: "0 0 * * *"
