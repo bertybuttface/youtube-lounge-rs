@@ -33,6 +33,7 @@
     "dial",
     "dlna",
     "dotenv",
+    "dotenvy",
     "dsdp",
     "dsdtr",
     "dtolnay",

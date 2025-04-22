@@ -15,7 +15,7 @@ pub struct Settings {
 impl Settings {
     fn from_env() -> Self {
         // optionally load .env
-        let _ = dotenv::dotenv();
+        let _ = dotenvy::dotenv();
 
         // helper to parse usize
         fn parse_usize(var: &str, default: usize) -> usize {
