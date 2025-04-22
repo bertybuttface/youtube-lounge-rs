@@ -8,6 +8,7 @@
     {"name": "[0-9]+.[0-9]+.x", "range": "${name}", "prerelease": false},
     {"name": "[0-9]+.x", "range": "${name}", "prerelease": false}
   ],
+  "tagFormat": "v${version}",
   "plugins": [
     [
         "@semantic-release/commit-analyzer",

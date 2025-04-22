@@ -1,6 +1,7 @@
 ---
 name: Release
-permissions: read-all
+permissions:
+  contents: write
 
 # This workflow is triggered manually
 on:
@@ -17,4 +18,3 @@ jobs:
       cargo-registry-token: ${{ secrets.CRATES_IO_TOKEN }}
       # Optional, but must be specified with github_app_id input is set
       # github_app_private_key: ${{ secrets.SEMANTIC_RELEASE_GITHUB_PRIVATE_KEY }}
-    permissions: write-all
