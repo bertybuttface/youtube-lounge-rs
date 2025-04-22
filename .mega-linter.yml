@@ -23,6 +23,8 @@ APPLY_FIXES: all
 
 SHOW_ELAPSED_TIME: true
 
+SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (package-lock\.json)
+
 # SEMGREP rulesets
 REPOSITORY_SEMGREP_RULESETS:
   - "p/docker-compose"
