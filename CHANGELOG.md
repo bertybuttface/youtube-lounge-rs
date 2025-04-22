@@ -1,3 +1,9 @@
+## <small>8.0.7 (2025-04-22)</small>
+
+* fix: Move semantic patterns under groups in dependabot configuration ([4ee62ca](https://github.com/bertybuttface/youtube-lounge-rs/commit/4ee62ca))
+* chore: Update dependabot configuration for daily npm updates and adjust pre-commit args ([fd14e2e](https://github.com/bertybuttface/youtube-lounge-rs/commit/fd14e2e))
+* chore: Update dependabot configuration to include semantic patterns and add 'wordlist' to cspell dic ([c689279](https://github.com/bertybuttface/youtube-lounge-rs/commit/c689279))
+
 ## <small>8.0.6 (2025-04-22)</small>
 
 * fix: Dotenv is unmaintained, use Dotenvy instead. ([7a3a32a](https://github.com/bertybuttface/youtube-lounge-rs/commit/7a3a32a))
