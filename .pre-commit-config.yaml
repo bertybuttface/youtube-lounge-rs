@@ -55,7 +55,7 @@ repos:
         name: "🌳 git · Preventing submodule creation"
       # - id: no-commit-to-branch
       #   name: "🌳 git · Protecting main branches"
-      #   args: ["--branch", "main", "--branch", "master"]
+      #   args: ["--branch", "main"]
       - id: check-added-large-files
         name: "🌳 git · Blocking large file commits"
         args: ["--maxkb=5000"]
