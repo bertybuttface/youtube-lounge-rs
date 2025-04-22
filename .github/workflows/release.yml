@@ -35,4 +35,3 @@ jobs:
       cargo-registry-token: ${{ secrets.CRATES_IO_TOKEN }}
       # Optional, but must be specified with github_app_id input is set
       # github_app_private_key: ${{ secrets.SEMANTIC_RELEASE_GITHUB_PRIVATE_KEY }}
-      github-token: ${{ secrets.GITHUB_TOKEN }} # Ensure this is passed if the reusable workflow needs it
