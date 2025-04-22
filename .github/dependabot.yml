@@ -25,7 +25,8 @@ updates:
       prefix: "chore"
       prefix-development: "chore"
       include: "scope"
-    semantic:
-      patterns:
-        - "*semantic*"
-        - "*conventionalcommits*"
+    groups:
+      semantic:
+        patterns:
+          - "*semantic*"
+          - "*conventionalcommits*"
