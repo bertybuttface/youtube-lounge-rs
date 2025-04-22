@@ -3,7 +3,7 @@
 A lightweight Rust client library for the YouTube Lounge API, which allows controlling YouTube playback on TV devices and other connected displays.
 
 [![Crates.io](https://img.shields.io/crates/v/youtube-lounge-rs.svg)](https://crates.io/crates/youtube-lounge-rs)
-[![Docs.rs](https://docs.rs/youtube-lounge-rs/badge.svg)](https://docs.rs/youtube-lounge-rs)
+[![Docs.rs](https://docs.rs/youtube_lounge_rs/badge.svg)](https://docs.rs/youtube_lounge_rs)
 [![CI](https://github.com/bertybuttface/youtube-lounge-rs/workflows/CI/badge.svg)](https://github.com/bertybuttface/youtube-lounge-rs/actions/workflows/ci.yml)
 [![Mega-Linter](https://github.com/bertybuttface/youtube-lounge-rs/workflows/MegaLinter/badge.svg?branch=main)](https://github.com/bertybuttface/youtube-lounge-rs/actions?query=workflow%3AMegaLinter+branch%3Amain)
 [![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc/4.0/)
@@ -47,6 +47,7 @@ youtube-lounge-rs = "8.0.5"
 ### Dependencies
 
 This library requires:
+
 - Rust 1.56 or later
 - `tokio` for async runtime
 - `reqwest` for HTTP requests
@@ -263,17 +264,20 @@ client.disconnect().await?;
 The `NowPlaying` event can appear in several different forms during playback:
 
 1. **Initial playlist notification**: Contains only `listId` but no video information
+
    ```json
    {"listId":"RQHOSZo8I72PfncOk8TEWlvzMbJFs"}
    ```
 
 2. **Initial video loading**: Contains basic video information but no CPN yet
+
    ```json
    {"currentTime":"0","duration":"0","listId":"RQHOSZo8I72PfncOk8TEWlvzMbJFs",
     "loadedTime":"0","state":"3","videoId":"dQw4w9WgXcQ"}
    ```
 
 3. **Complete video information**: Contains full information including CPN
+
    ```json
    {"cpn":"pNuc5Oktxo2_Odby","currentTime":"0.716","duration":"212.061",
     "listId":"RQHOSZo8I72PfncOk8TEWlvzMbJFs","loadedTime":"14.68",
@@ -322,6 +326,7 @@ cargo run --example basic_example <your_pairing_code>
 ```
 
 This example demonstrates:
+
 - Pairing with a screen
 - Connecting to the device
 - Creating event receiver
@@ -371,6 +376,7 @@ The main client for interacting with the YouTube Lounge API.
 Commands that can be sent to control playback:
 
 #### Basic Control Commands
+
 - `Play` - Resume playback
 - `Pause` - Pause playback
 - `Next` - Skip to next video
@@ -383,10 +389,12 @@ Commands that can be sent to control playback:
 - `Unmute` - Unmute audio
 
 #### Content Commands
+
 - `SetPlaylist { ... }` - Play a video or playlist
 - `AddVideo { ... }` - Add a video to the queue
 
 #### Helper Methods
+
 - `set_playlist(video_id: String) -> Self`
 - `set_playlist_by_id(list_id: String) -> Self`
 - `set_playlist_with_index(list_id: String, index: i32) -> Self`
@@ -431,6 +439,7 @@ This library follows semantic versioning and uses GitHub Actions for automated r
    - `0.1.0` → `1.0.0` for major or breaking changes
 
 2. **Creating a Release**:
+
    ```bash
    # Update version in Cargo.toml
    # Commit the changes
