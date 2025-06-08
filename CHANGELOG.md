@@ -1,3 +1,9 @@
+## [8.0.8](https://github.com/bertybuttface/youtube-lounge-rs/compare/v8.0.7...v8.0.8) (2025-06-08)
+
+### Bug Fixes
+
+* Add DuplicateScreen error. ([7f6cc3b](https://github.com/bertybuttface/youtube-lounge-rs/commit/7f6cc3be20d4236774913ab6269291e6cd01852c))
+
 ## <small>8.0.7 (2025-04-22)</small>
 
 * fix: Move semantic patterns under groups in dependabot configuration ([4ee62ca](https://github.com/bertybuttface/youtube-lounge-rs/commit/4ee62ca))
