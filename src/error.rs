@@ -38,6 +38,9 @@ pub enum LoungeError {
 
     #[error("Task panicked or cancelled")]
     TaskJoinError(#[from] tokio::task::JoinError),
+
+    #[error("Already connected to screen: {0}")]
+    DuplicateScreen(String),
 }
 
 impl LoungeError {
