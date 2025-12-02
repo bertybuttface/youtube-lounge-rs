@@ -3,13 +3,13 @@
   "version": "0.0.0-development",
   "private": true,
   "devDependencies": {
-    "semantic-release": "24.2.3",
+    "semantic-release": "25.0.2",
     "@semantic-release/commit-analyzer": "13.0.1",
-    "@semantic-release/release-notes-generator": "14.0.3",
+    "@semantic-release/release-notes-generator": "14.1.0",
     "@semantic-release/changelog": "6.0.3",
-    "@semantic-release-cargo/semantic-release-cargo": "2.4.34",
-    "@semantic-release/github": "11.0.1",
+    "@semantic-release-cargo/semantic-release-cargo": "2.4.81",
+    "@semantic-release/github": "12.0.2",
     "@semantic-release/git": "10.0.1",
-    "conventional-changelog-conventionalcommits": "8.0.0"
+    "conventional-changelog-conventionalcommits": "9.1.0"
   }
 }
