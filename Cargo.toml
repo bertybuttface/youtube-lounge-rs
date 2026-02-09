@@ -24,7 +24,7 @@ dotenvy = "0.15"
 futures = "0.3"
 lazy_static = "1"
 once_cell = "1.20"
-rand = { version = "0.9" }
+rand = { version = "0.10" }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
